@@ -1,12 +1,12 @@
 # AutoR
 
-AutoR is a terminal-first, file-based research workflow runner. A user gives a research goal, AutoR executes a fixed 8-stage pipeline with Claude Code, and every stage must be explicitly approved by a human before the workflow can continue.
+AutoR is a terminal-first research workflow runner for long-form AI-assisted research. It takes a research goal, runs a fixed 8-stage pipeline with Claude Code, and requires explicit human approval after every stage before the workflow can continue.
 
-The system is built around durable run directories, strict human approval, and concrete research artifacts rather than text-only summaries.
+Each run is isolated under `runs/<run_id>/`. AutoR is intentionally file-based: prompts, logs, stage outputs, and research artifacts are all written into the run directory so the workflow is inspectable, resumable, and auditable.
 
-## What It Is
+## Overview
 
-AutoR runs these fixed stages:
+AutoR uses a fixed stage order:
 
 1. `01_literature_survey`
 2. `02_hypothesis_generation`
@@ -17,18 +17,16 @@ AutoR runs these fixed stages:
 7. `07_writing`
 8. `08_dissemination`
 
-Each stage attempt:
+Core constraints:
 
-- builds a prompt from the stage template, user goal, approved memory, and optional revision feedback
-- invokes Claude exactly once
-- writes a stage draft to `stages/<stage>.tmp.md`
-- validates summary structure and artifact requirements
-- promotes the validated draft to `stages/<stage>.md`
-- waits for explicit human approval
+- One Claude invocation per stage attempt.
+- Every stage writes a draft summary to `stages/<stage>.tmp.md`.
+- AutoR validates the draft, then promotes it to `stages/<stage>.md`.
+- Human approval is mandatory after every validated stage.
+- `1/2/3/4` rerun the current stage. Only `5` advances. `6` aborts.
+- Approved stage summaries are appended to `memory.md`.
 
-## Code Structure
-
-Key files:
+The main code lives in:
 
 - [main.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/main.py)
 - [src/manager.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/manager.py)
@@ -36,134 +34,140 @@ Key files:
 - [src/utils.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/utils.py)
 - [src/prompts/](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/prompts)
 
+## Code Structure
+
 ```mermaid
 flowchart LR
     A[main.py] --> B[src/manager.py]
     B --> C[src/operator.py]
     B --> D[src/utils.py]
-    C --> D
     B --> E[src/prompts/*]
+    C --> D
 ```
 
-Module roles:
+File boundaries:
 
-- [main.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/main.py)
-  - CLI entry point
-  - starts a new run or resumes an existing run
-- [src/manager.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/manager.py)
-  - owns the stage loop
-  - handles repair, promotion, approval, and resume logic
-- [src/operator.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/operator.py)
-  - invokes Claude CLI
-  - streams output live
-  - runs repair prompts
-- [src/utils.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/utils.py)
-  - stage metadata
-  - run paths
-  - prompt assembly
-  - markdown validation
-  - artifact validation
+- [main.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/main.py): CLI entry point. Starts a new run or resumes an existing run.
+- [src/manager.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/manager.py): Owns the 8-stage loop, approval flow, repair flow, resume, and redo-stage logic.
+- [src/operator.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/operator.py): Invokes Claude CLI, streams output live, and runs repair prompts.
+- [src/utils.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/utils.py): Stage metadata, prompt assembly, run paths, markdown validation, and artifact validation.
+- [src/prompts/](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/prompts): Per-stage prompt templates.
 
-## Run Structure
+## Workspace Structure
 
-Each run lives under `runs/<run_id>/`.
+Each run contains `user_input.txt`, `memory.md`, `prompt_cache/`, `stages/`, `workspace/`, `logs.txt`, and `logs_raw.jsonl`. The substantive research payload lives in `workspace/`.
 
 ```mermaid
 flowchart TD
-    A[runs/<run_id>] --> B[user_input.txt]
-    A --> C[memory.md]
-    A --> D[logs.txt]
-    A --> E[logs_raw.jsonl]
-    A --> F[prompt_cache/]
-    A --> G[stages/]
-    A --> H[workspace/]
-
-    G --> G1[<stage>.tmp.md]
-    G --> G2[<stage>.md]
-
-    H --> H1[literature/]
-    H --> H2[code/]
-    H --> H3[data/]
-    H --> H4[results/]
-    H --> H5[writing/]
-    H --> H6[figures/]
-    H --> H7[artifacts/]
-    H --> H8[notes/]
-    H --> H9[reviews/]
+    A[workspace/] --> B[literature/]
+    A --> C[code/]
+    A --> D[data/]
+    A --> E[results/]
+    A --> F[writing/]
+    A --> G[figures/]
+    A --> H[artifacts/]
+    A --> I[notes/]
+    A --> J[reviews/]
 ```
 
-Meaning:
+Directory boundaries:
 
-- `user_input.txt`
-  - original user goal
-- `memory.md`
-  - approved cross-stage context only
-- `prompt_cache/`
-  - exact prompts used for attempts and repairs
-- `stages/<stage>.tmp.md`
-  - current attempt draft
-- `stages/<stage>.md`
-  - validated final stage summary
-- `workspace/`
-  - substantive research artifacts
+- `literature/`: papers, benchmark notes, survey tables, reading artifacts.
+- `code/`: runnable pipeline code, scripts, configs, and method implementations.
+- `data/`: machine-readable datasets, manifests, processed splits, caches, and loaders.
+- `results/`: machine-readable metrics, predictions, ablations, tables, and evaluation outputs.
+- `writing/`: manuscript sources, LaTeX, section drafts, tables, and bibliography.
+- `figures/`: plots, diagrams, charts, and paper figures.
+- `artifacts/`: compiled PDFs and packaged deliverables.
+- `notes/`: temporary notes and setup material.
+- `reviews/`: critique notes, threat-to-validity notes, and readiness reviews.
 
 ## Workflow
 
-This is the full 8-stage control loop.
-
 ```mermaid
 flowchart TD
-    A[Start or resume run] --> B[Select stage]
-    B --> C[Build prompt]
-    C --> D[Invoke Claude once]
-    D --> E[Validate stage output]
-    E --> F{Approved by human?}
-    F -- Refine --> B
-    F -- Approve --> G{More stages?}
-    G -- Yes --> B
-    G -- No --> H[Run complete]
-    F -- Abort --> I[Abort]
+    A[Start or resume run] --> S1[01 Literature Survey]
+    S1 --> H1{Human approval}
+    H1 -- Refine --> S1
+    H1 -- Approve --> S2[02 Hypothesis Generation]
+    H1 -- Abort --> X[Abort]
+
+    S2 --> H2{Human approval}
+    H2 -- Refine --> S2
+    H2 -- Approve --> S3[03 Study Design]
+    H2 -- Abort --> X
+
+    S3 --> H3{Human approval}
+    H3 -- Refine --> S3
+    H3 -- Approve --> S4[04 Implementation]
+    H3 -- Abort --> X
+
+    S4 --> H4{Human approval}
+    H4 -- Refine --> S4
+    H4 -- Approve --> S5[05 Experimentation]
+    H4 -- Abort --> X
+
+    S5 --> H5{Human approval}
+    H5 -- Refine --> S5
+    H5 -- Approve --> S6[06 Analysis]
+    H5 -- Abort --> X
+
+    S6 --> H6{Human approval}
+    H6 -- Refine --> S6
+    H6 -- Approve --> S7[07 Writing]
+    H6 -- Abort --> X
+
+    S7 --> H7{Human approval}
+    H7 -- Refine --> S7
+    H7 -- Approve --> S8[08 Dissemination]
+    H7 -- Abort --> X
+
+    S8 --> H8{Human approval}
+    H8 -- Refine --> S8
+    H8 -- Approve --> Z[Run complete]
+    H8 -- Abort --> X
 ```
 
 ## Stage Attempt Loop
 
-This is the internal loop for a single stage.
-
 ```mermaid
 flowchart TD
-    A[Build prompt] --> B[Claude writes <stage>.tmp.md]
-    B --> C[Validate markdown]
-    C --> D[Validate artifacts]
+    A[Build prompt from template + goal + memory + optional feedback] --> B[Run Claude Code once]
+    B --> C[Write draft stage summary]
+    C --> D[Validate markdown and required artifacts]
     D --> E{Valid?}
-    E -- Yes --> F[Promote to <stage>.md]
-    E -- No --> G[Repair attempt]
-    G --> H{Valid after repair?}
-    H -- Yes --> F
-    H -- No --> I[Local normalization or rerun]
+    E -- No --> F[Repair, normalize, or rerun current stage]
+    F --> A
+    E -- Yes --> G[Promote draft to final stage summary]
+    G --> H{Human choice}
+    H -- 1 or 2 or 3 --> I[Use selected AI refinement suggestion]
     I --> A
+    H -- 4 --> J[Collect custom feedback]
+    J --> A
+    H -- 5 --> K[Append approved summary to memory.md]
+    K --> L[Continue to next stage]
+    H -- 6 --> X[Abort]
 ```
 
-Rules:
+Stage-loop rules:
 
 - Claude never writes directly to the final stage file.
-- The final stage file is only created after validation.
-- Invalid stages do not advance.
-- Human approval is the only path to the next stage.
+- The final stage file exists only after validation succeeds.
+- If validation still fails after repair and normalization, AutoR reruns the same stage.
+- The stage loop is controlled by AutoR, not by Claude.
 
-## Prompt and Execution Model
+## Prompt and Execution
 
-For each stage attempt, AutoR builds a prompt from:
+For each stage attempt, AutoR assembles a prompt from:
 
-1. the stage template
-2. the required stage summary format
-3. execution discipline
+1. the stage template from [src/prompts/](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/prompts)
+2. the required stage summary contract
+3. execution discipline and output-path constraints
 4. `user_input.txt`
-5. `memory.md`
-6. optional revision feedback
+5. approved `memory.md`
+6. optional refinement feedback
 
-Claude is invoked through [src/operator.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/operator.py) in streaming mode using a cached prompt file.
-
-Current invocation shape:
+AutoR writes the assembled prompt to `runs/<run_id>/prompt_cache/` and invokes Claude in streaming mode through [src/operator.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/operator.py):
 
 ```bash
 claude --model <model> \
@@ -174,56 +178,13 @@ claude --model <model> \
   --verbose
 ```
 
-## Human Review Loop
-
-After a validated stage summary is displayed, AutoR accepts:
-
-- `1`, `2`, `3`
-  - rerun the current stage using the corresponding AI refinement suggestion
-- `4`
-  - rerun the current stage using custom user feedback
-- `5`
-  - approve the stage and append its approved summary to `memory.md`
-- `6`
-  - abort immediately
-
-Only `5` may advance to the next stage.
-
-## Resume and Redo
-
-Resume the latest run:
-
-```bash
-python main.py --resume-run latest
-```
-
-Resume a specific run:
-
-```bash
-python main.py --resume-run 20260329_210252
-```
-
-Redo from a specific stage inside the same run:
-
-```bash
-python main.py --resume-run 20260329_210252 --redo-stage 03
-```
-
-Valid stage identifiers include:
-
-- `03`
-- `3`
-- `03_study_design`
-
-Resume logic is implemented in [main.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/main.py) and [src/manager.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/manager.py).
+The streamed Claude output is shown live in the terminal and also captured in `logs_raw.jsonl`.
 
 ## Validation
 
-AutoR validates both stage summaries and stage artifacts.
+AutoR validates both the stage markdown and the stage artifacts.
 
-### Stage Summary Requirements
-
-Each stage summary must contain:
+Required stage markdown shape:
 
 ```md
 # Stage X: <name>
@@ -237,30 +198,22 @@ Each stage summary must contain:
 ## Your Options
 ```
 
-It must also:
+Additional markdown requirements:
 
-- contain 3 numbered refinement suggestions
-- contain the fixed 6 user options
-- avoid unfinished placeholders such as `[In progress]`, `[Pending]`, `[TODO]`
-- list concrete file paths in `Files Produced`
+- Exactly 3 numbered refinement suggestions.
+- The fixed 6 user options.
+- No unfinished placeholders such as `[In progress]`, `[Pending]`, `[TODO]`, or `[TBD]`.
+- Concrete file paths in `Files Produced`.
 
-### Artifact Requirements
+Artifact requirements by stage:
 
-Beyond markdown, later stages must produce concrete artifacts:
+- Stage 03+: machine-readable data under `workspace/data/`
+- Stage 05+: machine-readable results under `workspace/results/`
+- Stage 06+: figure files under `workspace/figures/`
+- Stage 07+: NeurIPS-style LaTeX sources plus a compiled PDF under `workspace/writing/` or `workspace/artifacts/`
+- Stage 08+: review and readiness artifacts under `workspace/reviews/`
 
-- Stage 03+
-  - machine-readable data under `workspace/data/`
-- Stage 05+
-  - machine-readable results under `workspace/results/`
-- Stage 06+
-  - figure files under `workspace/figures/`
-- Stage 07+
-  - NeurIPS-style LaTeX sources under `workspace/writing/`
-  - compiled PDF under `workspace/writing/` or `workspace/artifacts/`
-- Stage 08+
-  - review/readiness artifacts under `workspace/reviews/`
-
-This is intentional. A run with only markdown notes is not treated as a serious completed research package.
+A run with only markdown notes does not pass validation.
 
 ## CLI
 
@@ -282,6 +235,28 @@ Run fake mode:
 python main.py --fake-operator --goal "Smoke test"
 ```
 
+Resume the latest run:
+
+```bash
+python main.py --resume-run latest
+```
+
+Resume a specific run:
+
+```bash
+python main.py --resume-run 20260329_210252
+```
+
+Redo from a specific stage inside the same run:
+
+```bash
+python main.py --resume-run 20260329_210252 --redo-stage 03
+```
+
+`--resume-run ... --redo-stage ...` continues inside the existing run directory. It does not create a new run.
+
+Valid stage identifiers include `03`, `3`, and `03_study_design`.
+
 ## Scope
 
 Included:
@@ -289,10 +264,10 @@ Included:
 - fixed 8-stage workflow
 - one Claude invocation per stage attempt
 - mandatory human approval after every stage
-- AI refine / custom refine / approve / abort
+- AI refine, custom refine, approve, and abort
 - isolated run directories
-- streaming Claude output
-- repair passes
+- live Claude streaming output
+- repair passes and rerun fallback
 - draft-to-final stage promotion
 - resume and redo-stage support
 - artifact-level validation
@@ -308,4 +283,4 @@ Out of scope:
 ## Notes
 
 - `runs/` is gitignored.
-- The workflow control layer is implemented; submission-grade output still depends on the available environment, data access, model access, and the quality of the stage attempts.
+- AutoR implements the workflow control layer. Submission-grade output still depends on the environment, available tools, data access, model access, and the quality of the stage attempts.
