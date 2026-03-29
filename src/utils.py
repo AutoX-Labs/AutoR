@@ -31,6 +31,7 @@ class RunPaths:
     logs: Path
     logs_raw: Path
     prompt_cache_dir: Path
+    operator_state_dir: Path
     stages_dir: Path
     workspace_root: Path
     literature_dir: Path
@@ -49,6 +50,9 @@ class RunPaths:
     def stage_tmp_file(self, stage: StageSpec) -> Path:
         return self.stages_dir / f"{stage.slug}.tmp.md"
 
+    def stage_session_file(self, stage: StageSpec) -> Path:
+        return self.operator_state_dir / f"{stage.slug}.session_id.txt"
+
 
 @dataclass(frozen=True)
 class OperatorResult:
@@ -57,6 +61,7 @@ class OperatorResult:
     stdout: str
     stderr: str
     stage_file_path: Path
+    session_id: str | None = None
 
 
 STAGES: list[StageSpec] = [
@@ -133,6 +138,7 @@ def build_run_paths(run_root: Path) -> RunPaths:
         logs=run_root / "logs.txt",
         logs_raw=run_root / "logs_raw.jsonl",
         prompt_cache_dir=run_root / "prompt_cache",
+        operator_state_dir=run_root / "operator_state",
         stages_dir=run_root / "stages",
         workspace_root=workspace_root,
         literature_dir=workspace_root / "literature",
@@ -150,6 +156,7 @@ def build_run_paths(run_root: Path) -> RunPaths:
 def ensure_run_layout(paths: RunPaths) -> None:
     paths.run_root.mkdir(parents=True, exist_ok=True)
     paths.prompt_cache_dir.mkdir(parents=True, exist_ok=True)
+    paths.operator_state_dir.mkdir(parents=True, exist_ok=True)
     paths.stages_dir.mkdir(parents=True, exist_ok=True)
     paths.workspace_root.mkdir(parents=True, exist_ok=True)
 
@@ -305,6 +312,50 @@ def build_prompt(
         approved_memory.strip() or "_None yet._",
         "# Revision Feedback",
         revision_feedback.strip() if revision_feedback else "None.",
+    ]
+    return "\n\n".join(sections).strip() + "\n"
+
+
+def build_continuation_prompt(
+    stage: StageSpec,
+    stage_template: str,
+    paths: RunPaths,
+    revision_feedback: str | None,
+) -> str:
+    current_draft = paths.stage_tmp_file(stage)
+    current_final = paths.stage_file(stage)
+
+    sections = [
+        "# Continue Existing Stage Conversation",
+        (
+            f"You are continuing {stage.stage_title} in the same AutoR conversation for this stage. "
+            "This is an incremental improvement pass inside the current stage, not a fresh restart."
+        ),
+        "# Stage Instructions",
+        stage_template.strip(),
+        "# Required Stage Summary Format",
+        (
+            "You must create or overwrite the stage summary markdown file using exactly the "
+            "top-level heading order below. Do not omit any section. Use exactly 3 numbered "
+            "refinement suggestions and exactly the fixed 6 option lines."
+        ),
+        "```md\n" + required_stage_output_template(stage).strip() + "\n```",
+        "# Continuation Discipline",
+        (
+            f"1. Read the current draft at `{current_draft.resolve()}` if it exists.\n"
+            f"2. Read the last promoted stage summary at `{current_final.resolve()}` if it exists.\n"
+            f"3. Read approved memory from `{paths.memory.resolve()}` and the original user goal from `{paths.user_input.resolve()}` if needed.\n"
+            f"4. Treat workspace artifacts already under `{paths.workspace_root.resolve()}` as part of the current stage context and reuse them.\n"
+            "5. Preserve all valid work already completed in this stage unless the new feedback requires changing it.\n"
+            "6. Fill the missing pieces, fix weak points, and update the stage summary instead of throwing away correct work.\n"
+            "7. Overwrite only the draft stage output path once you are ready to produce the updated complete summary.\n"
+            "8. Do not leave placeholder text such as [In progress], [Pending], [TODO], [TBD], or similar unfinished markers.\n"
+            "9. If the existing stage work is partially correct, keep the correct parts and extend them rather than replacing them blindly."
+        ),
+        "# New Feedback",
+        revision_feedback.strip()
+        if revision_feedback
+        else "Continue improving the current stage output and fix the issues from the previous attempt.",
     ]
     return "\n\n".join(sections).strip() + "\n"
 

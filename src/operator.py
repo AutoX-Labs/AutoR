@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import TextIO
 
@@ -41,10 +42,11 @@ class ClaudeOperator:
         prompt: str,
         paths: RunPaths,
         attempt_no: int,
+        continue_session: bool = False,
     ) -> OperatorResult:
         if self.fake_mode:
-            return self._run_fake(stage, prompt, paths, attempt_no)
-        return self._run_real(stage, prompt, paths, attempt_no)
+            return self._run_fake(stage, prompt, paths, attempt_no, continue_session=continue_session)
+        return self._run_real(stage, prompt, paths, attempt_no, continue_session=continue_session)
 
     def _run_real(
         self,
@@ -52,6 +54,7 @@ class ClaudeOperator:
         prompt: str,
         paths: RunPaths,
         attempt_no: int,
+        continue_session: bool = False,
     ) -> OperatorResult:
         if shutil.which(self.command) is None:
             raise FileNotFoundError(
@@ -60,20 +63,8 @@ class ClaudeOperator:
 
         prompt_path = paths.prompt_cache_dir / f"{stage.slug}_attempt_{attempt_no:02d}.prompt.md"
         write_text(prompt_path, prompt)
-
-        command = [
-            self.command,
-            "--model",
-            self.model,
-            "--permission-mode",
-            "bypassPermissions",
-            "--dangerously-skip-permissions",
-            "-p",
-            f"@{prompt_path}",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-        ]
+        session_id = self._resolve_stage_session_id(paths, stage, continue_session)
+        command = self._build_cli_command(prompt_path, session_id, resume=continue_session)
 
         append_jsonl(
             paths.logs_raw,
@@ -81,35 +72,58 @@ class ClaudeOperator:
                 "_meta": {
                     "stage": stage.slug,
                     "attempt": attempt_no,
-                    "mode": "real",
-                    "command": [
-                        self.command,
-                        "--model",
-                        self.model,
-                        "--permission-mode",
-                        "bypassPermissions",
-                        "--dangerously-skip-permissions",
-                        "-p",
-                        f"@{prompt_path}",
-                        "--output-format",
-                        "stream-json",
-                        "--verbose",
-                    ],
+                    "mode": "real_continue" if continue_session else "real_start",
+                    "command": command,
                     "prompt_path": str(prompt_path),
+                    "session_id": session_id,
                 }
             },
         )
 
-        exit_code, stdout_text, stderr_text = self._run_streaming_command(
+        exit_code, stdout_text, stderr_text, observed_session_id = self._run_streaming_command(
             command=command,
             cwd=paths.run_root,
             stage=stage,
             attempt_no=attempt_no,
             paths=paths,
-            mode="real",
+            mode="real_continue" if continue_session else "real_start",
         )
-
         stage_file = paths.stage_tmp_file(stage)
+
+        if (
+            continue_session
+            and exit_code != 0
+            and not stage_file.exists()
+            and self._looks_like_resume_failure(stdout_text, stderr_text)
+        ):
+            fallback_session_id = str(uuid.uuid4())
+            fallback_command = self._build_cli_command(prompt_path, fallback_session_id, resume=False)
+            append_jsonl(
+                paths.logs_raw,
+                {
+                    "_meta": {
+                        "stage": stage.slug,
+                        "attempt": attempt_no,
+                        "mode": "real_continue_fallback_start",
+                        "previous_session_id": session_id,
+                        "fallback_session_id": fallback_session_id,
+                        "command": fallback_command,
+                        "prompt_path": str(prompt_path),
+                    }
+                },
+            )
+            exit_code, stdout_text, stderr_text, observed_session_id = self._run_streaming_command(
+                command=fallback_command,
+                cwd=paths.run_root,
+                stage=stage,
+                attempt_no=attempt_no,
+                paths=paths,
+                mode="real_continue_fallback_start",
+            )
+            session_id = fallback_session_id
+
+        effective_session_id = observed_session_id or session_id
+        self._persist_stage_session_id(paths, stage, effective_session_id)
         success = exit_code == 0 and stage_file.exists()
 
         return OperatorResult(
@@ -118,6 +132,7 @@ class ClaudeOperator:
             stdout=stdout_text,
             stderr=stderr_text,
             stage_file_path=stage_file,
+            session_id=effective_session_id,
         )
 
     def repair_stage_summary(
@@ -129,9 +144,12 @@ class ClaudeOperator:
         attempt_no: int,
     ) -> OperatorResult:
         if self.fake_mode:
-            return self._run_fake(stage, original_prompt, paths, attempt_no)
+            return self._run_fake(stage, original_prompt, paths, attempt_no, continue_session=False)
 
         stage_file = paths.stage_tmp_file(stage)
+        current_draft_text = read_text(stage_file) if stage_file.exists() else "(missing)"
+        current_final_path = paths.stage_file(stage)
+        current_final_text = read_text(current_final_path) if current_final_path.exists() else "(missing)"
         recovery_prompt = f"""
 You are performing failure recovery for {stage.stage_title}.
 
@@ -175,6 +193,12 @@ Required completion behavior:
 4. Ensure there is no `[In progress]`, `[Pending]`, `[TODO]`, `[TBD]`, or similar unfinished marker anywhere in the file.
 5. After writing, respond only with a short confirmation that you rewrote the file.
 
+Current draft stage file contents:
+{current_draft_text}
+
+Current promoted stage file contents:
+{current_final_text}
+
 Original prompt:
 {original_prompt}
 
@@ -187,22 +211,22 @@ Original stderr:
 
         recovery_prompt_path = paths.prompt_cache_dir / f"{stage.slug}_attempt_{attempt_no:02d}_repair.prompt.md"
         write_text(recovery_prompt_path, recovery_prompt)
-
-        command = [
-            self.command,
-            "--model",
-            self.model,
-            "--permission-mode",
-            "bypassPermissions",
-            "--dangerously-skip-permissions",
-            "--tools",
-            "Write,Read,Glob,Grep",
-            "-p",
-            f"@{recovery_prompt_path}",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-        ]
+        session_id = self._resolve_stage_session_id(paths, stage, continue_session=True, allow_create=False)
+        if session_id:
+            command = self._build_cli_command(
+                recovery_prompt_path,
+                session_id,
+                resume=True,
+                tools="Write,Read,Glob,Grep",
+            )
+        else:
+            session_id = self._resolve_stage_session_id(paths, stage, continue_session=False)
+            command = self._build_cli_command(
+                recovery_prompt_path,
+                session_id,
+                resume=False,
+                tools="Write,Read,Glob,Grep",
+            )
 
         append_jsonl(
             paths.logs_raw,
@@ -211,27 +235,14 @@ Original stderr:
                     "stage": stage.slug,
                     "attempt": attempt_no,
                     "mode": "repair",
-                    "command": [
-                        self.command,
-                        "--model",
-                        self.model,
-                        "--permission-mode",
-                        "bypassPermissions",
-                        "--dangerously-skip-permissions",
-                        "--tools",
-                        "Write,Read,Glob,Grep",
-                        "-p",
-                        f"@{recovery_prompt_path}",
-                        "--output-format",
-                        "stream-json",
-                        "--verbose",
-                    ],
+                    "command": command,
                     "prompt_path": str(recovery_prompt_path),
+                    "session_id": session_id,
                 }
             },
         )
 
-        exit_code, stdout_text, stderr_text = self._run_streaming_command(
+        exit_code, stdout_text, stderr_text, observed_session_id = self._run_streaming_command(
             command=command,
             cwd=paths.run_root,
             stage=stage,
@@ -239,6 +250,45 @@ Original stderr:
             paths=paths,
             mode="repair",
         )
+        if (
+            session_id
+            and exit_code != 0
+            and not stage_file.exists()
+            and self._looks_like_resume_failure(stdout_text, stderr_text)
+        ):
+            fallback_session_id = str(uuid.uuid4())
+            fallback_command = self._build_cli_command(
+                recovery_prompt_path,
+                fallback_session_id,
+                resume=False,
+                tools="Write,Read,Glob,Grep",
+            )
+            append_jsonl(
+                paths.logs_raw,
+                {
+                    "_meta": {
+                        "stage": stage.slug,
+                        "attempt": attempt_no,
+                        "mode": "repair_fallback_start",
+                        "previous_session_id": session_id,
+                        "fallback_session_id": fallback_session_id,
+                        "command": fallback_command,
+                        "prompt_path": str(recovery_prompt_path),
+                    }
+                },
+            )
+            exit_code, stdout_text, stderr_text, observed_session_id = self._run_streaming_command(
+                command=fallback_command,
+                cwd=paths.run_root,
+                stage=stage,
+                attempt_no=attempt_no,
+                paths=paths,
+                mode="repair_fallback_start",
+            )
+            session_id = fallback_session_id
+
+        effective_session_id = observed_session_id or session_id
+        self._persist_stage_session_id(paths, stage, effective_session_id)
 
         return OperatorResult(
             success=exit_code == 0 and stage_file.exists(),
@@ -246,6 +296,7 @@ Original stderr:
             stdout=stdout_text,
             stderr=stderr_text,
             stage_file_path=stage_file,
+            session_id=effective_session_id,
         )
 
     def _run_streaming_command(
@@ -256,7 +307,7 @@ Original stderr:
         attempt_no: int,
         paths: RunPaths,
         mode: str,
-    ) -> tuple[int, str, str]:
+    ) -> tuple[int, str, str, str | None]:
         process = subprocess.Popen(
             command,
             cwd=str(cwd),
@@ -273,6 +324,7 @@ Original stderr:
         raw_lines: list[str] = []
         non_json_lines: list[str] = []
         ended_with_newline = True
+        observed_session_id: str | None = None
 
         try:
             for raw_line in process.stdout:
@@ -304,6 +356,8 @@ Original stderr:
                     continue
 
                 append_jsonl(paths.logs_raw, payload)
+                if observed_session_id is None:
+                    observed_session_id = self._extract_session_id(payload)
                 extracted_fragments.extend(extract_stream_text_fragments(payload))
         except KeyboardInterrupt:
             process.terminate()
@@ -326,7 +380,7 @@ Original stderr:
             non_json_lines=non_json_lines,
             raw_lines=raw_lines,
         )
-        return exit_code, stdout_text, ""
+        return exit_code, stdout_text, "", observed_session_id
 
     def _compose_stdout_text(
         self,
@@ -354,7 +408,10 @@ Original stderr:
         prompt: str,
         paths: RunPaths,
         attempt_no: int,
+        continue_session: bool = False,
     ) -> OperatorResult:
+        session_id = self._resolve_stage_session_id(paths, stage, continue_session=continue_session)
+        self._persist_stage_session_id(paths, stage, session_id)
         previous_summaries = approved_stage_summaries(read_text(paths.memory))
         note_path = paths.notes_dir / f"{stage.slug}_fake_operator_note.md"
         stage_tmp_path = paths.stage_tmp_file(stage)
@@ -405,7 +462,8 @@ Original stderr:
                 "_meta": {
                     "stage": stage.slug,
                     "attempt": attempt_no,
-                    "mode": "fake",
+                    "mode": "fake_continue" if continue_session else "fake_start",
+                    "session_id": session_id,
                 }
             },
         )
@@ -416,4 +474,71 @@ Original stderr:
             stdout="Fake operator completed successfully.",
             stderr="",
             stage_file_path=stage_tmp_path,
+            session_id=session_id,
         )
+
+    def _resolve_stage_session_id(
+        self,
+        paths: RunPaths,
+        stage: StageSpec,
+        continue_session: bool,
+        allow_create: bool = True,
+    ) -> str | None:
+        session_file = paths.stage_session_file(stage)
+        if session_file.exists():
+            session_id = read_text(session_file).strip()
+            if session_id:
+                return session_id
+
+        if continue_session and not allow_create:
+            return None
+
+        return str(uuid.uuid4())
+
+    def _persist_stage_session_id(self, paths: RunPaths, stage: StageSpec, session_id: str | None) -> None:
+        if not session_id:
+            return
+        write_text(paths.stage_session_file(stage), session_id)
+
+    def _extract_session_id(self, payload: dict[str, object]) -> str | None:
+        value = payload.get("session_id")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    def _build_cli_command(
+        self,
+        prompt_path: Path,
+        session_id: str,
+        *,
+        resume: bool,
+        tools: str | None = None,
+    ) -> list[str]:
+        command = [
+            self.command,
+            "--model",
+            self.model,
+            "--permission-mode",
+            "bypassPermissions",
+            "--dangerously-skip-permissions",
+        ]
+        if tools:
+            command.extend(["--tools", tools])
+        if resume:
+            command.extend(["--resume", session_id])
+        else:
+            command.extend(["--session-id", session_id])
+        command.extend(
+            [
+                "-p",
+                f"@{prompt_path}",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+            ]
+        )
+        return command
+
+    def _looks_like_resume_failure(self, stdout_text: str, stderr_text: str) -> bool:
+        combined = "\n".join(part for part in [stdout_text, stderr_text] if part).lower()
+        return "no conversation found with session id" in combined or "resume" in combined and "not found" in combined

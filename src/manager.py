@@ -12,6 +12,7 @@ from .utils import (
     StageSpec,
     append_approved_stage_summary,
     append_log_entry,
+    build_continuation_prompt,
     build_prompt,
     build_run_paths,
     canonicalize_stage_markdown,
@@ -115,23 +116,31 @@ class ResearchManager:
     def _run_stage(self, paths: RunPaths, stage: StageSpec) -> bool:
         attempt_no = 1
         revision_feedback: str | None = None
+        continue_session = False
 
         while True:
             self._print(f"\nRunning {stage.stage_title} (attempt {attempt_no})...")
-            prompt = self._build_stage_prompt(paths, stage, revision_feedback)
+            prompt = self._build_stage_prompt(paths, stage, revision_feedback, continue_session)
             append_log_entry(
                 paths.logs,
                 f"{stage.slug} attempt {attempt_no} prompt",
                 prompt,
             )
 
-            result = self.operator.run_stage(stage, prompt, paths, attempt_no)
+            result = self.operator.run_stage(
+                stage,
+                prompt,
+                paths,
+                attempt_no,
+                continue_session=continue_session,
+            )
             append_log_entry(
                 paths.logs,
                 f"{stage.slug} attempt {attempt_no} result",
                 (
                     f"success: {result.success}\n"
                     f"exit_code: {result.exit_code}\n"
+                    f"session_id: {result.session_id or '(unknown)'}\n"
                     f"stage_file_path: {result.stage_file_path}\n"
                     f"final_stage_file_path: {paths.stage_file(stage)}\n\n"
                     "stdout:\n"
@@ -256,10 +265,11 @@ class ResearchManager:
                             f"Local normalization for {stage.stage_title} is still incomplete. Re-running the stage..."
                         )
                         revision_feedback = (
-                            "Rerun the current stage from scratch. The previous draft remained structurally invalid "
-                            "after repair and local normalization. Produce a fully complete stage summary with no placeholder "
-                            "markers and ensure every required section is substantively filled."
+                            "Continue the current stage conversation and fix the invalid stage summary. "
+                            "Keep all correct work already completed, but produce a fully complete stage summary "
+                            "with no placeholder markers and ensure every required section is substantively filled."
                         )
+                        continue_session = True
                         attempt_no += 1
                         continue
 
@@ -290,16 +300,20 @@ class ResearchManager:
                 suggestions = parse_refinement_suggestions(stage_markdown)
                 selected = suggestions[int(choice) - 1]
                 revision_feedback = (
-                    "Rerun the current stage from scratch and address this refinement request:\n"
+                    "Continue the current stage conversation and improve the existing work. "
+                    "Do not discard correct completed parts. Address this refinement request:\n"
                     f"{selected}"
                 )
+                continue_session = True
                 attempt_no += 1
                 continue
 
             if choice == "4":
                 custom_feedback = self._read_multiline_feedback()
                 revision_feedback = (
-                    "Rerun the current stage from scratch and address this user feedback:\n"
+                    "Continue the current stage conversation and improve the existing work. "
+                    "Preserve correct completed parts unless the feedback requires changing them. "
+                    "Address this user feedback:\n"
                     f"{custom_feedback}"
                 )
                 append_log_entry(
@@ -307,6 +321,7 @@ class ResearchManager:
                     f"{stage.slug} attempt {attempt_no} custom_feedback",
                     custom_feedback,
                 )
+                continue_session = True
                 attempt_no += 1
                 continue
 
@@ -328,9 +343,13 @@ class ResearchManager:
         paths: RunPaths,
         stage: StageSpec,
         revision_feedback: str | None,
+        continue_session: bool,
     ) -> str:
         template = load_prompt_template(self.prompt_dir, stage)
         stage_template = format_stage_template(template, stage, paths)
+        if continue_session:
+            return build_continuation_prompt(stage, stage_template, paths, revision_feedback)
+
         user_request = read_text(paths.user_input)
         approved_memory = read_text(paths.memory)
         return build_prompt(stage, stage_template, user_request, approved_memory, revision_feedback)

@@ -23,16 +23,17 @@ Core constraints:
 - Every stage writes a draft summary to `stages/<stage>.tmp.md`.
 - AutoR validates the draft, then promotes it to `stages/<stage>.md`.
 - Human approval is mandatory after every validated stage.
-- `1/2/3/4` rerun the current stage. Only `5` advances. `6` aborts.
+- Each stage keeps its own Claude conversation state.
+- `1/2/3/4` continue the current stage conversation with refinement feedback. Only `5` advances. `6` aborts.
 - Approved stage summaries are appended to `memory.md`.
 
 The main code lives in:
 
-- [main.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/main.py)
-- [src/manager.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/manager.py)
-- [src/operator.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/operator.py)
-- [src/utils.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/utils.py)
-- [src/prompts/](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/prompts)
+- [main.py](main.py)
+- [src/manager.py](src/manager.py)
+- [src/operator.py](src/operator.py)
+- [src/utils.py](src/utils.py)
+- [src/prompts/](src/prompts)
 
 ## Code Structure
 
@@ -47,15 +48,15 @@ flowchart LR
 
 File boundaries:
 
-- [main.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/main.py): CLI entry point. Starts a new run or resumes an existing run.
-- [src/manager.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/manager.py): Owns the 8-stage loop, approval flow, repair flow, resume, and redo-stage logic.
-- [src/operator.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/operator.py): Invokes Claude CLI, streams output live, and runs repair prompts.
-- [src/utils.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/utils.py): Stage metadata, prompt assembly, run paths, markdown validation, and artifact validation.
-- [src/prompts/](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/prompts): Per-stage prompt templates.
+- [main.py](main.py): CLI entry point. Starts a new run or resumes an existing run.
+- [src/manager.py](src/manager.py): Owns the 8-stage loop, approval flow, repair flow, resume, redo-stage logic, and stage-level continuation policy.
+- [src/operator.py](src/operator.py): Invokes Claude CLI, streams output live, persists stage session IDs, resumes the same stage conversation for refinement, and falls back to a fresh session if resume fails.
+- [src/utils.py](src/utils.py): Stage metadata, prompt assembly, run paths, markdown validation, and artifact validation.
+- [src/prompts/](src/prompts): Per-stage prompt templates.
 
 ## Workspace Structure
 
-Each run contains `user_input.txt`, `memory.md`, `prompt_cache/`, `stages/`, `workspace/`, `logs.txt`, and `logs_raw.jsonl`. The substantive research payload lives in `workspace/`.
+Each run contains `user_input.txt`, `memory.md`, `prompt_cache/`, `operator_state/`, `stages/`, `workspace/`, `logs.txt`, and `logs_raw.jsonl`. The substantive research payload lives in `workspace/`.
 
 ```mermaid
 flowchart TD
@@ -140,9 +141,9 @@ flowchart TD
     F --> A
     E -- Yes --> G[Promote draft to final stage summary]
     G --> H{Human choice}
-    H -- 1 or 2 or 3 --> I[Use selected AI refinement suggestion]
+    H -- 1 or 2 or 3 --> I[Continue current stage conversation with AI refinement]
     I --> A
-    H -- 4 --> J[Collect custom feedback]
+    H -- 4 --> J[Continue current stage conversation with custom feedback]
     J --> A
     H -- 5 --> K[Append approved summary to memory.md]
     K --> L[Continue to next stage]
@@ -153,30 +154,35 @@ Stage-loop rules:
 
 - Claude never writes directly to the final stage file.
 - The final stage file exists only after validation succeeds.
-- If validation still fails after repair and normalization, AutoR reruns the same stage.
+- The first attempt of a stage starts a fresh Claude session; later refinements continue that same stage session.
+- If validation still fails after repair and normalization, AutoR keeps working inside the same stage and can fall back to a fresh session only if resume fails.
 - The stage loop is controlled by AutoR, not by Claude.
 
 ## Prompt and Execution
 
 For each stage attempt, AutoR assembles a prompt from:
 
-1. the stage template from [src/prompts/](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/prompts)
+1. the stage template from [src/prompts/](src/prompts)
 2. the required stage summary contract
 3. execution discipline and output-path constraints
 4. `user_input.txt`
 5. approved `memory.md`
 6. optional refinement feedback
+7. for continuation attempts, the current stage draft/final files and existing workspace state
 
-AutoR writes the assembled prompt to `runs/<run_id>/prompt_cache/` and invokes Claude in streaming mode through [src/operator.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/operator.py):
+AutoR writes the assembled prompt to `runs/<run_id>/prompt_cache/`, stores per-stage session IDs in `runs/<run_id>/operator_state/`, and invokes Claude in streaming mode through [src/operator.py](src/operator.py):
 
 ```bash
 claude --model <model> \
   --permission-mode bypassPermissions \
   --dangerously-skip-permissions \
+  --session-id <stage_session_id> \
   -p @runs/<run_id>/prompt_cache/<stage>_attempt_<nn>.prompt.md \
   --output-format stream-json \
   --verbose
 ```
+
+Refinement attempts on the same stage reuse the same `stage_session_id` and call Claude with `--resume <stage_session_id>` instead of opening a new stage conversation.
 
 The streamed Claude output is shown live in the terminal and also captured in `logs_raw.jsonl`.
 
@@ -264,6 +270,7 @@ Included:
 - fixed 8-stage workflow
 - one Claude invocation per stage attempt
 - mandatory human approval after every stage
+- stage-local Claude conversation continuation within a stage
 - AI refine, custom refine, approve, and abort
 - isolated run directories
 - live Claude streaming output
