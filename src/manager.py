@@ -23,6 +23,7 @@ from .utils import (
     parse_refinement_suggestions,
     read_text,
     truncate_text,
+    validate_stage_artifacts,
     validate_stage_markdown,
     write_text,
 )
@@ -45,8 +46,31 @@ class ResearchManager:
     def run(self, user_goal: str) -> bool:
         paths = self._create_run(user_goal)
         self._print(f"Run created at: {paths.run_root}")
+        return self._run_from_paths(paths)
 
-        for stage in STAGES:
+    def resume_run(self, run_root: Path, start_stage: StageSpec | None = None) -> bool:
+        paths = build_run_paths(run_root)
+        ensure_run_layout(paths)
+        if not paths.user_input.exists():
+            raise FileNotFoundError(f"Missing user_input.txt in run: {run_root}")
+        if not paths.memory.exists():
+            raise FileNotFoundError(f"Missing memory.md in run: {run_root}")
+
+        append_log_entry(
+            paths.logs,
+            "run_resume",
+            f"Resumed run at: {paths.run_root}"
+            + (f"\nRequested start stage: {start_stage.stage_title}" if start_stage else ""),
+        )
+        self._print(f"Resuming run at: {paths.run_root}")
+        if start_stage:
+            self._print(f"Restarting from: {start_stage.stage_title}")
+        return self._run_from_paths(paths, start_stage=start_stage)
+
+    def _run_from_paths(self, paths: RunPaths, start_stage: StageSpec | None = None) -> bool:
+        stages_to_run = self._select_stages_for_run(paths, start_stage)
+
+        for stage in stages_to_run:
             approved = self._run_stage(paths, stage)
             if not approved:
                 append_log_entry(
@@ -69,6 +93,24 @@ class ResearchManager:
         initialize_memory(paths, user_goal)
         append_log_entry(paths.logs, "run_start", f"Run root: {paths.run_root}")
         return paths
+
+    def _select_stages_for_run(
+        self,
+        paths: RunPaths,
+        start_stage: StageSpec | None,
+    ) -> list[StageSpec]:
+        if start_stage is not None:
+            return [stage for stage in STAGES if stage.number >= start_stage.number]
+
+        approved_memory = read_text(paths.memory)
+        pending: list[StageSpec] = []
+        for stage in STAGES:
+            final_stage_path = paths.stage_file(stage)
+            if final_stage_path.exists() and stage.stage_title in approved_memory:
+                continue
+            pending.append(stage)
+
+        return pending
 
     def _run_stage(self, paths: RunPaths, stage: StageSpec) -> bool:
         attempt_no = 1
@@ -136,7 +178,7 @@ class ResearchManager:
                 )
 
             stage_markdown = read_text(result.stage_file_path)
-            validation_errors = validate_stage_markdown(stage_markdown)
+            validation_errors = validate_stage_markdown(stage_markdown) + validate_stage_artifacts(stage, paths)
             if validation_errors:
                 self._print(
                     f"Stage summary for {stage.stage_title} was incomplete. Running repair attempt..."
@@ -173,7 +215,7 @@ class ResearchManager:
                     )
 
                 stage_markdown = read_text(repair_result.stage_file_path)
-                validation_errors = validate_stage_markdown(stage_markdown)
+                validation_errors = validate_stage_markdown(stage_markdown) + validate_stage_artifacts(stage, paths)
                 if validation_errors:
                     self._print(
                         f"Repair output for {stage.stage_title} is still incomplete. Normalizing locally..."
@@ -200,12 +242,26 @@ class ResearchManager:
                     )
 
                     stage_markdown = read_text(repair_result.stage_file_path)
-                    validation_errors = validate_stage_markdown(stage_markdown)
+                    validation_errors = validate_stage_markdown(stage_markdown) + validate_stage_artifacts(stage, paths)
                     if validation_errors:
-                        joined = "\n- ".join(validation_errors)
-                        raise RuntimeError(
-                            f"Invalid stage markdown for {stage.slug} after local normalization:\n- {joined}"
+                        append_log_entry(
+                            paths.logs,
+                            f"{stage.slug} attempt {attempt_no} local_normalization_failed",
+                            (
+                                "Local normalization remained invalid. Re-running current stage from scratch.\n\n"
+                                + "\n".join(f"- {problem}" for problem in validation_errors)
+                            ),
                         )
+                        self._print(
+                            f"Local normalization for {stage.stage_title} is still incomplete. Re-running the stage..."
+                        )
+                        revision_feedback = (
+                            "Rerun the current stage from scratch. The previous draft remained structurally invalid "
+                            "after repair and local normalization. Produce a fully complete stage summary with no placeholder "
+                            "markers and ensure every required section is substantively filled."
+                        )
+                        attempt_no += 1
+                        continue
 
                 result = repair_result
 

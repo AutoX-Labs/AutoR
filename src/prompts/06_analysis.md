@@ -19,6 +19,7 @@ Interpret the available evidence rigorously and determine what claims the curren
 - All generated working files must remain under `{{WORKSPACE_ROOT}}`.
 - Put analysis notes, evaluation breakdowns, and interpretive documents under `{{WORKSPACE_RESULTS_DIR}}` or `{{WORKSPACE_NOTES_DIR}}`.
 - Put figures, plots, or tables created for interpretation under `{{WORKSPACE_FIGURES_DIR}}` or `{{WORKSPACE_RESULTS_DIR}}`.
+- Create real figure files (`.png`, `.pdf`, `.svg`, `.jpg`) under `{{WORKSPACE_FIGURES_DIR}}`; textual descriptions of figures are not sufficient.
 - The stage summary draft for the current attempt must be written to `{{STAGE_OUTPUT_PATH}}`.
 - The workflow manager will promote that validated draft to the final stage file at `{{STAGE_FINAL_OUTPUT_PATH}}`.
 
@@ -47,5 +48,6 @@ Additional expectations for this stage:
 
 - Do not overclaim.
 - Do not hide contradictory evidence.
+- Do not stop at prose-only analysis if tables, plots, or figure files can be generated from available results.
 - Do not control workflow progression.
 - Do not write outside the current run directory.

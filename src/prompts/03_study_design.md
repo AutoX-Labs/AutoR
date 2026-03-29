@@ -20,6 +20,7 @@ Convert the approved hypotheses into a concrete study or experimental design tha
 - All generated working files must remain under `{{WORKSPACE_ROOT}}`.
 - Put design docs, evaluation plans, ablation plans, and protocol notes under `{{WORKSPACE_NOTES_DIR}}`.
 - Put benchmark or dataset planning notes under `{{WORKSPACE_DATA_DIR}}`.
+- Create machine-readable dataset manifests under `{{WORKSPACE_DATA_DIR}}` (for example `.json`, `.jsonl`, `.csv`, `.yaml`) rather than only markdown descriptions.
 - Put planned result templates or reporting skeletons under `{{WORKSPACE_RESULTS_DIR}}`.
 - The stage summary draft for the current attempt must be written to `{{STAGE_OUTPUT_PATH}}`.
 - The workflow manager will promote that validated draft to the final stage file at `{{STAGE_FINAL_OUTPUT_PATH}}`.
@@ -48,5 +49,6 @@ Additional expectations for this stage:
 ## Important Constraints
 
 - Do not skip methodological weaknesses.
+- Do not treat plain markdown planning notes as sufficient data artifacts once concrete dataset definitions can be materialized.
 - Do not control workflow progression.
 - Do not write outside the current run directory.

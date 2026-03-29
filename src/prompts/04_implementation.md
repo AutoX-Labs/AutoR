@@ -18,7 +18,7 @@ Implement the approved study design in a way that supports reproducible experime
 
 - All generated working files must remain under `{{WORKSPACE_ROOT}}`.
 - Put implementation files under `{{WORKSPACE_CODE_DIR}}`.
-- Put dataset loaders, transforms, and metadata helpers under `{{WORKSPACE_DATA_DIR}}` when relevant.
+- Put dataset loaders, transforms, metadata helpers, and machine-readable dataset manifests under `{{WORKSPACE_DATA_DIR}}` when relevant.
 - Put implementation notes or unresolved engineering concerns under `{{WORKSPACE_NOTES_DIR}}`.
 - The stage summary draft for the current attempt must be written to `{{STAGE_OUTPUT_PATH}}`.
 - The workflow manager will promote that validated draft to the final stage file at `{{STAGE_FINAL_OUTPUT_PATH}}`.
@@ -46,5 +46,6 @@ Additional expectations for this stage:
 ## Important Constraints
 
 - Do not pretend unimplemented components exist.
+- Do not stop at prose-only implementation plans if concrete configs, manifests, scripts, or machine-readable artifacts can be produced.
 - Do not control workflow progression.
 - Do not write outside the current run directory.

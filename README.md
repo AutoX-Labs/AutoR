@@ -1,31 +1,124 @@
-# AutoR (Auto Research)
+# AutoR
+
+AutoR is a file-based research workflow runner for staged AI-assisted research. A user provides a research goal, AutoR executes a fixed 8-stage pipeline with Claude Code, and every stage must be explicitly reviewed and approved by a human before the workflow may continue.
+
+The current system is terminal-first, but the terminal is only the present interaction surface. The workflow itself is designed around durable run directories, reproducible artifacts, and strict human approval gates.
 
 ## Overview
 
-AutoR is an AI-assisted research workflow system. A user provides a research goal, the system breaks the work into stages, Claude Code executes each stage, and the user reviews, revises, and approves the output at each checkpoint.
+AutoR splits work into 8 fixed stages:
 
-This repository defines the first minimal runnable version. The goal is to validate the full research loop end to end before building a fuller product surface. The current MVP runs in the terminal, but the terminal is only the current interaction surface, not the final product form.
+1. `01_literature_survey`
+2. `02_hypothesis_generation`
+3. `03_study_design`
+4. `04_implementation`
+5. `05_experimentation`
+6. `06_analysis`
+7. `07_writing`
+8. `08_dissemination`
 
-## Architecture
+Each stage attempt:
 
-### Core Rules
+- builds a prompt from the stage template, user goal, approved memory, and optional revision feedback
+- invokes Claude Code exactly once
+- writes a stage summary draft
+- validates structure and artifact requirements
+- promotes the validated draft to the final stage file
+- pauses for explicit human approval
+
+## Core Principles
 
 - Stage order is fixed.
 - `refine` means a full rerun of the current stage.
-- Workflow state should stay simple and file-based.
-- Stages should not exchange complex schemas or custom protocol layers unless there is a proven need later.
-- Unnecessary abstraction is forbidden.
-- Do not introduce plugin systems, generic orchestration frameworks, or over-designed class hierarchies for the MVP.
-- `manager.py` owns workflow control.
-- `operator.py` owns Claude execution.
-- `utils.py` contains shared helpers only.
+- Workflow state stays file-based and local to a run directory.
+- Human approval is mandatory after every stage.
+- Claude executes research work, but never controls workflow transitions.
+- The stage summary file is not a scratchpad.
+- Toy outputs are not acceptable once the workflow reaches data-, experiment-, analysis-, writing-, and dissemination-heavy stages.
 
-### Repository Layout
+## Architecture
+
+### Main Modules
+
+- [main.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/main.py)
+  - CLI entry point
+  - supports new runs and resuming existing runs
+- [src/manager.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/manager.py)
+  - owns the 8-stage loop
+  - handles approvals, refinement, repair, promotion, and resume logic
+- [src/operator.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/operator.py)
+  - invokes Claude CLI
+  - streams Claude output live to the terminal
+  - handles repair prompts
+- [src/utils.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/utils.py)
+  - shared helpers for stage metadata, run paths, prompt construction, validation, and artifact checks
+- [src/prompts/](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/prompts)
+  - version-controlled stage prompt templates
+
+### Dependency Direction
+
+```text
+main.py -> manager.py -> operator.py
+                    \-> utils.py
+operator.py -> utils.py
+```
+
+## Workflow Logic
+
+### End-to-End Stage Loop
+
+```mermaid
+flowchart TD
+    A[User starts AutoR] --> B[Create or resume run]
+    B --> C[Select current stage]
+    C --> D[Build prompt from stage template + user_input + memory + revision feedback]
+    D --> E[Invoke Claude once]
+    E --> F[Write stage draft to stages/<stage>.tmp.md]
+    F --> G[Validate markdown structure]
+    G --> H[Validate required research artifacts]
+    H --> I{Valid?}
+    I -- No --> J[Run repair attempt]
+    J --> K{Valid after repair?}
+    K -- No --> L[Local normalization / forced rerun]
+    L --> D
+    K -- Yes --> M[Promote tmp draft to stages/<stage>.md]
+    I -- Yes --> M
+    M --> N[Display stage summary]
+    N --> O{Human choice}
+    O -- 1/2/3 --> P[Use AI refinement suggestion]
+    P --> D
+    O -- 4 --> Q[Collect custom feedback]
+    Q --> D
+    O -- 5 --> R[Append approved summary to memory.md]
+    R --> S{More stages?}
+    S -- Yes --> C
+    S -- No --> T[Run complete]
+    O -- 6 --> U[Abort run]
+```
+
+### Draft-to-Final Promotion
+
+AutoR does not let Claude write directly to the final user-facing stage file.
+
+```mermaid
+flowchart LR
+    A[Claude writes stages/<stage>.tmp.md] --> B[Manager validates markdown]
+    B --> C[Manager validates artifact requirements]
+    C --> D{Passes?}
+    D -- Yes --> E[Copy to stages/<stage>.md]
+    D -- No --> F[Repair or rerun current stage]
+```
+
+This prevents half-finished stage summaries from contaminating the final stage record.
+
+## Repository Layout
 
 ```text
 repo/
+├── README.md
 ├── main.py
 ├── src/
+│   ├── __init__.py
 │   ├── manager.py
 │   ├── operator.py
 │   ├── utils.py
@@ -41,56 +134,21 @@ repo/
 └── runs/
 ```
 
-### Module Boundaries
-
-- `main.py`
-  - bootstrap only
-  - reads the initial user goal
-  - instantiates the manager and operator
-- `src/manager.py`
-  - owns the 8-stage loop
-  - creates run directories
-  - builds prompts
-  - handles user choices `1` to `6`
-  - decides rerun, approve, next, and abort behavior
-  - writes approved memory and logs
-  - should use direct control flow, not an event system or workflow framework
-- `src/operator.py`
-  - calls Claude CLI directly
-  - parses `stream-json` output
-  - captures stdout, stderr, and exit code
-  - validates that the required stage markdown exists
-  - should return a minimal execution result only
-  - does not decide workflow transitions
-- `src/utils.py`
-  - stage metadata
-  - path helpers
-  - prompt assembly helpers
-  - markdown parsing helpers
-  - file and log helpers
-  - should remain a pure helper layer, not a second manager
-- `src/prompts/`
-  - version-controlled prompt templates only
-  - never runtime outputs
-
-### Dependency Direction
-
-```text
-main.py -> manager.py -> operator.py
-                    \-> utils.py
-operator.py -> utils.py
-```
-
 ## Run Layout
 
-Each execution creates an isolated run directory:
+Every run is isolated under `runs/<run_id>/`.
 
 ```text
 runs/<run_id>/
 ├── user_input.txt
 ├── memory.md
+├── logs.txt
 ├── logs_raw.jsonl
+├── prompt_cache/
+│   ├── 01_literature_survey_attempt_01.prompt.md
+│   ├── ...
 ├── stages/
+│   ├── 01_literature_survey.tmp.md
 │   ├── 01_literature_survey.md
 │   ├── ...
 ├── workspace/
@@ -103,268 +161,246 @@ runs/<run_id>/
 │   ├── artifacts/
 │   ├── notes/
 │   └── reviews/
-└── logs.txt
 ```
 
-Recommended `run_id` format:
-
-```text
-YYYYMMDD_HHMMSS
-```
-
-### Top-Level Boundaries
+### File Roles
 
 - `user_input.txt`
-  - stores only the original user request for this run
+  - original user goal for the run
 - `memory.md`
-  - stores only approved cross-stage context
-  - never failed attempts, revision history, or raw logs
-- `logs_raw.jsonl`
-  - stores the raw Claude `stream-json` event stream for debugging and replay
-- `stages/`
-  - stores stage summary markdown files
-  - is the canonical source of stage output
-  - is not a scratch directory
-- `workspace/`
-  - stores substantive research artifacts
-  - is not the workflow control plane
+  - original goal + approved stage summaries only
 - `logs.txt`
-  - stores audit and debug information
-  - is not approved memory or user-facing stage output
+  - human-readable execution log
+- `logs_raw.jsonl`
+  - raw Claude `stream-json` output
+- `prompt_cache/`
+  - exact prompts used for each attempt and repair
+- `stages/<stage>.tmp.md`
+  - current attempt draft
+- `stages/<stage>.md`
+  - validated final stage summary
+- `workspace/`
+  - substantive research artifacts
 
 ### Workspace Boundaries
 
 - `workspace/literature/`
-  - papers, reading notes, citations, survey material
+  - papers, benchmark notes, survey tables, reading artifacts
 - `workspace/code/`
-  - scripts, notebooks, implementations, runnable logic
+  - scripts, implementations, configs, runnable pipeline code
 - `workspace/data/`
-  - raw data references, processed data, metadata, loaders
+  - dataset manifests, machine-readable metadata, processed splits, loaders
 - `workspace/results/`
-  - metrics, evaluations, tables, experiment outputs
+  - machine-readable outputs, metrics, tables, ablation data, evaluation artifacts
 - `workspace/writing/`
-  - outlines, abstracts, drafts, dissemination text
+  - manuscript sources, LaTeX, abstracts, sections, tables
 - `workspace/figures/`
   - plots, diagrams, charts, visual assets
 - `workspace/artifacts/`
-  - packaged deliverables, reproducibility bundles, export-ready outputs
+  - compiled paper PDF, release bundles, packaged deliverables
 - `workspace/notes/`
-  - temporary notes, TODOs, open questions, scratch thinking
+  - temporary notes, design notes, setup instructions, scratch material
 - `workspace/reviews/`
-  - critique notes, revision checklists, response drafts
+  - critique notes, threat-to-validity notes, submission checklists, readiness reviews
 
-## Stage Model
+## Prompt Construction
 
-### Fixed Stage Order
+For every stage attempt, AutoR builds the prompt in a fixed order:
 
-```text
-01_literature_survey
-02_hypothesis_generation
-03_study_design
-04_implementation
-05_experimentation
-06_analysis
-07_writing
-08_dissemination
+1. stage template from [src/prompts/](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/prompts)
+2. required stage summary format
+3. execution discipline and anti-placeholder rules
+4. original user request from `user_input.txt`
+5. approved context from `memory.md`
+6. optional revision feedback
+
+Prompt building is implemented in [src/utils.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/utils.py).
+
+## Claude Invocation
+
+AutoR currently uses Claude CLI in streaming mode. The operator writes the full prompt to `prompt_cache/` and then calls Claude using `@prompt-file` handoff to avoid shell argument limits.
+
+The normal stage invocation shape is:
+
+```bash
+claude --model <model> \
+  --permission-mode bypassPermissions \
+  --dangerously-skip-permissions \
+  -p @runs/<run_id>/prompt_cache/<stage>_attempt_<nn>.prompt.md \
+  --output-format stream-json \
+  --verbose
 ```
 
-### Simple Inter-Stage Contract
+The operator implementation is in [src/operator.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/operator.py).
 
-Each stage consumes:
+## Human Approval Loop
 
-- the current prompt template from `src/prompts/<stage>.md`
-- the original research request from `runs/<run_id>/user_input.txt`
-- approved context from `runs/<run_id>/memory.md`
-- the current contents of `runs/<run_id>/workspace/`
-- optional revision feedback for the current rerun
+After a validated stage summary is displayed, AutoR waits for one of:
 
-Each stage produces:
+- `1`
+  - rerun current stage with refinement suggestion 1
+- `2`
+  - rerun current stage with refinement suggestion 2
+- `3`
+  - rerun current stage with refinement suggestion 3
+- `4`
+  - rerun current stage with custom feedback
+- `5`
+  - approve stage and append approved summary to `memory.md`
+- `6`
+  - abort immediately
 
-- a required summary file at `runs/<run_id>/stages/<stage>.md`
-- any working artifacts inside `runs/<run_id>/workspace/`
+Only `5` advances to the next stage.
 
-That is the contract. Stages should not depend on custom per-stage JSON schemas or complex structured message formats.
+## Resume and Redo
 
-### Required Stage Output Format
+AutoR can resume an existing run without creating a new run directory.
 
-Every stage must generate markdown in the following structure:
+### Resume the latest run
+
+```bash
+python main.py --resume-run latest
+```
+
+### Resume a specific run
+
+```bash
+python main.py --resume-run 20260329_210252
+```
+
+### Redo from a specific stage inside the same run
+
+```bash
+python main.py --resume-run 20260329_210252 --redo-stage 03
+```
+
+Stage identifiers may be:
+
+- `03`
+- `3`
+- `03_study_design`
+
+Resume logic is implemented in [main.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/main.py) and [src/manager.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/manager.py).
+
+## Validation Model
+
+AutoR validates two things before a stage can be promoted:
+
+### 1. Markdown Structure
+
+Every stage summary must contain:
 
 ```md
 # Stage X: <name>
 
 ## Objective
-...
-
 ## Previously Approved Stage Summaries
-...
-
 ## What I Did
-...
-
 ## Key Results
-...
-
 ## Files Produced
-...
-
 ## Suggestions for Refinement
-1. ...
-2. ...
-3. ...
-
 ## Your Options
-1. Use suggestion 1
-2. Use suggestion 2
-3. Use suggestion 3
-4. Refine with your own feedback
-5. Approve and continue
-6. Abort
 ```
 
-The `Previously Approved Stage Summaries` section should be a concise readable summary of the relevant approved context from `memory.md`, not a raw dump.
+It must also:
 
-## Execution
+- contain 3 numbered refinement suggestions
+- contain the fixed 6 user options
+- avoid placeholder markers such as `[In progress]`, `[Pending]`, `[TODO]`
+- list concrete file paths in `Files Produced`
 
-### Entry Point
+### 2. Artifact Requirements
+
+Beyond markdown, later stages must produce concrete research artifacts:
+
+- Stage 03+
+  - machine-readable data artifacts under `workspace/data/`
+- Stage 05+
+  - machine-readable result artifacts under `workspace/results/`
+- Stage 06+
+  - figure files under `workspace/figures/`
+- Stage 07+
+  - NeurIPS-style LaTeX sources under `workspace/writing/`
+  - compiled PDF under `workspace/writing/` or `workspace/artifacts/`
+- Stage 08+
+  - review/readiness artifacts under `workspace/reviews/`
+
+Artifact validation is implemented in [src/utils.py](/mnt/d/xwh/ailab记录/工作/26年04月/AutoR/src/utils.py).
+
+### Validation-to-Repair Flow
+
+```mermaid
+flowchart TD
+    A[Claude stage draft] --> B[validate_stage_markdown]
+    B --> C[validate_stage_artifacts]
+    C --> D{Pass?}
+    D -- Yes --> E[Promote and display]
+    D -- No --> F[Claude repair pass]
+    F --> G{Pass after repair?}
+    G -- Yes --> E
+    G -- No --> H[Local normalization]
+    H --> I{Pass after normalization?}
+    I -- Yes --> E
+    I -- No --> J[Force rerun current stage]
+```
+
+## Current Acceptance Standard
+
+A run is not considered serious or submission-aligned if it only contains prose artifacts. In particular:
+
+- `workspace/data/` cannot be markdown-only past study design
+- `workspace/results/` cannot be markdown-only past experimentation
+- `workspace/figures/` cannot be empty past analysis
+- `workspace/reviews/` cannot be empty by dissemination
+- `workspace/writing/` cannot stop at markdown-only drafts if the workflow reaches writing/dissemination
+
+This is intentional. The current implementation is explicitly moving away from toy text-only outputs toward concrete research packages.
+
+## CLI
+
+### Start a new run
 
 ```bash
 python main.py
 ```
 
-### End-to-End Flow
-
-1. `main.py` reads the user goal and starts the manager.
-2. The manager creates `runs/<run_id>/` and initializes the run files and workspace directories.
-3. The manager enters the fixed 8-stage loop.
-4. For each stage attempt, the manager:
-   - loads the stage template
-   - loads `user_input.txt`
-   - loads `memory.md`
-   - appends revision feedback if this is a rerun
-   - builds the final prompt
-5. The manager passes the prompt and run context to the operator.
-6. The operator invokes Claude exactly once, captures both parsed output and raw `stream-json`, and checks that `runs/<run_id>/stages/<stage>.md` exists.
-7. The manager displays the stage markdown and waits for user choice.
-8. The manager reruns the same stage, advances, or aborts.
-9. The program exits only when Stage 8 is approved or the user explicitly aborts.
-
-### Prompt Construction
-
-For every stage attempt, the final prompt is assembled in this order:
-
-1. current stage template from `src/prompts/<stage>.md`
-2. original user request from `runs/<run_id>/user_input.txt`
-3. approved context from `runs/<run_id>/memory.md`
-4. revision feedback, only when rerunning the current stage
-
-Prompt assembly should stay simple. Use a small number of clearly delimited text sections, not a complex inter-stage exchange format.
-
-### Claude Invocation Contract
-
-Each stage attempt must use this CLI form:
+### Start a new run with a goal provided inline
 
 ```bash
-claude --dangerously-skip-permissions -p "<PROMPT>" --output-format stream-json --verbose
+python main.py --goal "Your research goal here"
 ```
 
-Claude must be instructed to follow these rules:
+### Fake operator mode
 
-- all work must happen inside `runs/<run_id>/workspace/`
-- the stage summary file must be written to `runs/<run_id>/stages/<stage>.md`
-- the summary must follow the required markdown structure exactly
-- the summary must include the previously approved stage summaries in readable form
-- Claude must not control stage transitions, approvals, retries, or abort behavior
-
-Operator rules:
-
-- call the Claude CLI directly
-- parse `stream-json` directly enough to extract useful execution information
-- avoid unnecessary abstraction layers around the CLI call
-- persist the raw `stream-json` stream to `runs/<run_id>/logs_raw.jsonl`
-
-Suggested minimal operator result:
-
-- `success`
-- `exit_code`
-- `stdout`
-- `stderr`
-- `stage_file_path`
-
-### Human Review Loop
-
-After the stage markdown is displayed, the current terminal version prompts:
-
-```text
-Enter your choice:
->
+```bash
+python main.py --fake-operator --goal "Smoke test"
 ```
 
-Supported inputs:
-
-- `1`, `2`, `3`
-  - use the corresponding refinement suggestion
-  - fully rerun the current stage
-- `4`
-  - collect custom user feedback
-  - fully rerun the current stage
-- `5`
-  - approve the current stage
-  - append the approved stage summary to `memory.md`
-  - move to the next stage
-- `6`
-  - abort the run immediately
-
-Additional rules:
-
-- the workflow must never auto-advance
-- `5` is the only action that may advance to the next stage
-- `1` through `4` always rerun the same stage
-- unapproved attempts must not be written into `memory.md`
-
-## State Rules
-
-- `memory.md`
-  - stores only the original user goal and approved stage summaries
-- `logs.txt`
-  - stores execution and interaction traces only
-- `logs_raw.jsonl`
-  - stores raw Claude event output only
-- these layers must stay distinct:
-  - `memory.md` = approved context
-  - `stages/<stage>.md` = user-facing stage output
-  - `workspace/` = research artifacts
-  - `logs.txt` = audit and debug
-  - `logs_raw.jsonl` = raw Claude stream output
-
-## MVP v0.1
+## Scope
 
 ### Included
 
-- 8 fixed stages
+- fixed 8-stage workflow
 - one Claude invocation per stage attempt
 - mandatory human approval after every stage
-- AI refine, custom refine, approve, and abort
-- isolated run directories under `runs/<run_id>/`
-- multi-file Python structure with `manager.py`, `operator.py`, `utils.py`, and `src/prompts/`
-- direct-control-flow manager implementation
-- thin operator result model
-- raw `stream-json` persistence for debugging
-- support for a fake operator mode to validate the workflow before wiring real Claude execution
+- AI refine / custom refine / approve / abort
+- isolated run directories
+- streaming Claude output
+- repair passes
+- draft-to-final stage promotion
+- resume and redo-stage support
+- artifact-level validation gates
 
 ### Out of Scope
 
-- multi-agent execution
-- automatic evaluation
+- multi-agent orchestration
+- database-backed state
 - web UI
-- database
-- concurrent execution
+- concurrent stage execution
+- automatic reviewer scoring
 
-### Acceptance Criteria
+## Notes
 
-- `python main.py` starts the current terminal-based workflow
-- each run creates a separate directory under `runs/`
-- each stage attempt triggers exactly one Claude CLI invocation
-- every stage produces a valid markdown summary with the required sections
-- the user can refine the same stage multiple times before approval
-- only approved stage summaries are persisted into `memory.md`
-- the run ends only when Stage 8 is approved or the user explicitly aborts
+- `runs/` is gitignored.
+- The repo currently provides workflow control, validation, and prompt structure.
+- Whether a given run produces a real submission-grade package still depends on the available environment, data access, model access, and the quality of the stage attempts themselves.

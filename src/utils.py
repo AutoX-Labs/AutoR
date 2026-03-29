@@ -99,11 +99,16 @@ PLACEHOLDER_PATTERNS = [
     r"\[in progress[^\]]*\]",
     r"\[pending[^\]]*\]",
     r"\[todo[^\]]*\]",
-    r"\[tbd[^\]]*\]",
     r"\[to be determined[^\]]*\]",
     r"\[placeholder[^\]]*\]",
     r"\[to be populated[^\]]*\]",
 ]
+
+MACHINE_DATA_SUFFIXES = {".json", ".jsonl", ".csv", ".tsv", ".parquet", ".yaml", ".yml"}
+RESULT_SUFFIXES = {".json", ".jsonl", ".csv", ".tsv", ".parquet", ".npz", ".npy"}
+FIGURE_SUFFIXES = {".png", ".pdf", ".svg", ".jpg", ".jpeg"}
+LATEX_SUFFIXES = {".tex"}
+PDF_SUFFIXES = {".pdf"}
 
 
 def create_run_root(runs_dir: Path) -> Path:
@@ -406,6 +411,55 @@ def validate_stage_markdown(markdown: str) -> list[str]:
     return problems
 
 
+def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
+    problems: list[str] = []
+
+    if stage.number >= 3:
+        if _count_files_with_suffixes(paths.data_dir, MACHINE_DATA_SUFFIXES) == 0:
+            problems.append(
+                f"{stage.stage_title} requires machine-readable data artifacts under workspace/data, not only markdown notes."
+            )
+
+    if stage.number >= 5:
+        if _count_files_with_suffixes(paths.results_dir, RESULT_SUFFIXES) == 0:
+            problems.append(
+                f"{stage.stage_title} requires machine-readable result artifacts under workspace/results."
+            )
+
+    if stage.number >= 6:
+        if _count_files_with_suffixes(paths.figures_dir, FIGURE_SUFFIXES) == 0:
+            problems.append(
+                f"{stage.stage_title} requires figure artifacts under workspace/figures."
+            )
+
+    if stage.number >= 7:
+        tex_files = [path for path in _existing_files(paths.writing_dir) if path.suffix.lower() in LATEX_SUFFIXES]
+        if not tex_files:
+            problems.append(
+                f"{stage.stage_title} requires LaTeX sources under workspace/writing."
+            )
+        elif not any(_looks_like_neurips_tex(path) for path in tex_files):
+            problems.append(
+                f"{stage.stage_title} requires a NeurIPS-style LaTeX manuscript in workspace/writing."
+            )
+
+        pdf_count = _count_files_with_suffixes(paths.writing_dir, PDF_SUFFIXES)
+        pdf_count += _count_files_with_suffixes(paths.artifacts_dir, PDF_SUFFIXES)
+        if pdf_count == 0:
+            problems.append(
+                f"{stage.stage_title} requires a compiled PDF manuscript under workspace/writing or workspace/artifacts."
+            )
+
+    if stage.number >= 8:
+        review_files = _existing_files(paths.reviews_dir)
+        if not review_files:
+            problems.append(
+                f"{stage.stage_title} requires review/readiness artifacts under workspace/reviews."
+            )
+
+    return problems
+
+
 def render_approved_stage_entry(stage: StageSpec, stage_markdown: str) -> str:
     objective = extract_markdown_section(stage_markdown, "Objective") or "Not provided."
     what_i_did = extract_markdown_section(stage_markdown, "What I Did") or "Not provided."
@@ -492,6 +546,27 @@ def _extract_path_references(text: str) -> list[str]:
         paths.append(normalized)
 
     return paths
+
+
+def _existing_files(directory: Path) -> list[Path]:
+    if not directory.exists():
+        return []
+    return [path for path in directory.rglob("*") if path.is_file()]
+
+
+def _count_files_with_suffixes(directory: Path, suffixes: set[str]) -> int:
+    return sum(1 for path in _existing_files(directory) if path.suffix.lower() in suffixes)
+
+
+def _count_non_markdown_files(directory: Path) -> int:
+    return sum(1 for path in _existing_files(directory) if path.suffix.lower() not in {".md", ".txt"})
+
+
+def _looks_like_neurips_tex(path: Path) -> bool:
+    if not path.exists() or path.suffix.lower() != ".tex":
+        return False
+    text = read_text(path).lower()
+    return "neurips" in text and "\\documentclass" in text
 
 
 def canonicalize_stage_markdown(

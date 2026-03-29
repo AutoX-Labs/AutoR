@@ -12,13 +12,14 @@ Prepare the approved research outputs for external communication, submission rea
 - Consider publication-facing outputs, supporting artifacts, reproducibility expectations, and communication strategy.
 - Highlight what is ready for release or submission and what still needs strengthening.
 - Keep the dissemination plan aligned with the actual maturity of the work.
+- Package the final paper, figures, tables, results, and review/checklist materials into a concrete submission/release bundle.
 
 ## Filesystem Requirements
 
 - All generated working files must remain under `{{WORKSPACE_ROOT}}`.
 - Put release-ready or shareable bundles under `{{WORKSPACE_ARTIFACTS_DIR}}`.
 - Put summaries, positioning notes, or outward-facing communication drafts under `{{WORKSPACE_WRITING_DIR}}`.
-- Put final checklists or reviewer-facing readiness notes under `{{WORKSPACE_REVIEWS_DIR}}`.
+- Put final checklists, reviewer-facing readiness notes, submission checklists, and review artifacts under `{{WORKSPACE_REVIEWS_DIR}}`.
 - The stage summary draft for the current attempt must be written to `{{STAGE_OUTPUT_PATH}}`.
 - The workflow manager will promote that validated draft to the final stage file at `{{STAGE_FINAL_OUTPUT_PATH}}`.
 
@@ -27,6 +28,7 @@ Prepare the approved research outputs for external communication, submission rea
 - Dissemination should reflect the actual research status.
 - Reproducibility and communication quality matter.
 - The output should be useful for real submission or release preparation.
+- A completed dissemination stage should leave behind concrete release and review artifacts, not just prose descriptions.
 
 ## Stage Output Requirements
 
@@ -45,5 +47,6 @@ Additional expectations for this stage:
 ## Important Constraints
 
 - Do not present unfinished work as publication-ready if it is not.
+- Do not leave `{{WORKSPACE_REVIEWS_DIR}}` empty.
 - Do not control workflow progression.
 - Do not write outside the current run directory.

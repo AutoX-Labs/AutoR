@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.manager import ResearchManager
 from src.operator import ClaudeOperator
+from src.utils import STAGES, StageSpec
 
 
 def parse_args() -> argparse.Namespace:
@@ -29,7 +30,43 @@ def parse_args() -> argparse.Namespace:
         default="sonnet",
         help="Claude model alias or full model name for real runs. Defaults to 'sonnet'.",
     )
+    parser.add_argument(
+        "--resume-run",
+        help="Resume an existing run by run_id under runs/. Use 'latest' to resume the most recent run.",
+    )
+    parser.add_argument(
+        "--redo-stage",
+        help="When resuming a run, restart from this stage slug or stage number (for example '06_analysis' or '6').",
+    )
     return parser.parse_args()
+
+
+def resolve_stage(value: str | None) -> StageSpec | None:
+    if value is None:
+        return None
+
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+
+    for stage in STAGES:
+        if normalized in {stage.slug.lower(), str(stage.number), f"{stage.number:02d}"}:
+            return stage
+
+    raise ValueError(f"Unknown stage identifier: {value}")
+
+
+def resolve_resume_run(runs_dir: Path, value: str) -> Path:
+    if value == "latest":
+        candidates = sorted(path for path in runs_dir.iterdir() if path.is_dir())
+        if not candidates:
+            raise FileNotFoundError(f"No runs found in {runs_dir}")
+        return candidates[-1]
+
+    run_root = runs_dir / value
+    if not run_root.exists() or not run_root.is_dir():
+        raise FileNotFoundError(f"Run not found: {run_root}")
+    return run_root
 
 
 def read_user_goal() -> str:
@@ -59,14 +96,22 @@ def read_user_goal() -> str:
 def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parent
-    goal = args.goal.strip() if args.goal else read_user_goal()
+    runs_dir = repo_root / args.runs_dir
 
     operator = ClaudeOperator(model=args.model, fake_mode=args.fake_operator)
     manager = ResearchManager(
         project_root=repo_root,
-        runs_dir=repo_root / args.runs_dir,
+        runs_dir=runs_dir,
         operator=operator,
     )
+
+    if args.resume_run:
+        start_stage = resolve_stage(args.redo_stage)
+        run_root = resolve_resume_run(runs_dir, args.resume_run)
+        manager.resume_run(run_root, start_stage=start_stage)
+        return 0
+
+    goal = args.goal.strip() if args.goal else read_user_goal()
     manager.run(goal)
     return 0
 

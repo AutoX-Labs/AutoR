@@ -19,6 +19,7 @@ Run or define credible experiments that test the approved hypotheses using the i
 - All generated working files must remain under `{{WORKSPACE_ROOT}}`.
 - Put experiment scripts and run configs under `{{WORKSPACE_CODE_DIR}}` when needed.
 - Put raw or processed outputs under `{{WORKSPACE_RESULTS_DIR}}`.
+- Store machine-readable result artifacts such as `.json`, `.jsonl`, `.csv`, `.tsv`, `.parquet`, `.npy`, or `.npz` under `{{WORKSPACE_RESULTS_DIR}}`; markdown alone is not sufficient.
 - Put experiment logs, notes, and exception handling details under `{{WORKSPACE_NOTES_DIR}}`.
 - The stage summary draft for the current attempt must be written to `{{STAGE_OUTPUT_PATH}}`.
 - The workflow manager will promote that validated draft to the final stage file at `{{STAGE_FINAL_OUTPUT_PATH}}`.
@@ -47,5 +48,6 @@ Additional expectations for this stage:
 
 - Do not fabricate results.
 - If results are simulated, partial, or blocked, say so explicitly.
+- Do not treat a prose results summary as sufficient experimentation output when raw/processed result files can be written.
 - Do not control workflow progression.
 - Do not write outside the current run directory.
