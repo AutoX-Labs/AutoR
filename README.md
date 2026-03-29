@@ -56,7 +56,7 @@ File boundaries:
 
 ## Workspace Structure
 
-Each run contains `user_input.txt`, `memory.md`, `prompt_cache/`, `operator_state/`, `stages/`, `workspace/`, `logs.txt`, and `logs_raw.jsonl`. The substantive research payload lives in `workspace/`.
+Each run contains `user_input.txt`, `memory.md`, `knowledge_base/`, `run_state.json`, `prompt_cache/`, `operator_state/`, `stages/`, `workspace/`, `logs.txt`, and `logs_raw.jsonl`. The substantive research payload lives in `workspace/`.
 
 ```mermaid
 flowchart TD
@@ -263,6 +263,31 @@ python main.py --resume-run 20260329_210252 --redo-stage 03
 
 Valid stage identifiers include `03`, `3`, and `03_study_design`.
 
+Inspect structured run state:
+
+```bash
+python main.py --resume-run latest --show-status
+```
+
+Search the per-run knowledge base:
+
+```bash
+python main.py --resume-run latest --kb-search "hypothesis evidence" --kb-limit 8
+```
+
+Platform-alignment layer under `src/platform/` now includes:
+
+- orchestration patterns: sequential, parallel, hierarchical, swarm
+- A2A/MCP-style protocol bridge primitives
+- agent runtime manager and command-style research agents
+- semantic retrieval for Knowledge Base ranking
+- Foundry document generation for paper/poster/slides/social bundles
+- observability collectors for spans and metrics
+- RBAC scope checks for API access
+- sandbox execution policy and runner abstractions
+- messaging outbox integration
+- retry/fallback/classification/checkpoint primitives
+
 ## Scope
 
 Included:
@@ -278,10 +303,14 @@ Included:
 - draft-to-final stage promotion
 - resume and redo-stage support
 - artifact-level validation
+- structured `run_state.json` lifecycle tracking
+- per-run Knowledge Base with prompt injection and CLI search
+- stage-pattern metadata aligned with the ClawDock research design
+- platform-alignment modules for orchestration, protocols, runtimes, Foundry, observability, security, sandboxing, messaging, and deployment
 
 Out of scope:
 
-- multi-agent orchestration
+- true multi-agent orchestration execution
 - database-backed state
 - web UI
 - concurrent stage execution

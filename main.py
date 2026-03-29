@@ -38,6 +38,21 @@ def parse_args() -> argparse.Namespace:
         "--redo-stage",
         help="When resuming a run, restart from this stage slug or stage number (for example '06_analysis' or '6').",
     )
+    parser.add_argument(
+        "--show-status",
+        action="store_true",
+        help="Print the structured run status for --resume-run and exit.",
+    )
+    parser.add_argument(
+        "--kb-search",
+        help="Search the run knowledge base for --resume-run and exit.",
+    )
+    parser.add_argument(
+        "--kb-limit",
+        type=int,
+        default=5,
+        help="Maximum number of knowledge-base results to return with --kb-search. Defaults to 5.",
+    )
     return parser.parse_args()
 
 
@@ -106,8 +121,17 @@ def main() -> int:
     )
 
     if args.resume_run:
-        start_stage = resolve_stage(args.redo_stage)
         run_root = resolve_resume_run(runs_dir, args.resume_run)
+        if args.show_status or args.kb_search:
+            if args.redo_stage:
+                raise ValueError("--redo-stage cannot be combined with --show-status or --kb-search.")
+            if args.show_status:
+                print(manager.describe_run_status(run_root))
+            if args.kb_search:
+                print(manager.search_run_knowledge_base(run_root, args.kb_search, limit=max(args.kb_limit, 1)))
+            return 0
+
+        start_stage = resolve_stage(args.redo_stage)
         manager.resume_run(run_root, start_stage=start_stage)
         return 0
 

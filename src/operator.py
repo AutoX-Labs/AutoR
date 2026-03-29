@@ -424,6 +424,84 @@ Original stderr:
                 "calling Claude."
             ),
         )
+        file_paths = [relative_to_run(note_path, paths.run_root), relative_to_run(stage_tmp_path, paths.run_root)]
+
+        if stage.number >= 3:
+            data_path = paths.data_dir / f"{stage.slug}_fake_data.json"
+            write_text(
+                data_path,
+                json.dumps(
+                    {
+                        "stage": stage.slug,
+                        "fake": True,
+                        "kind": "data",
+                        "attempt": attempt_no,
+                    },
+                    indent=2,
+                ),
+            )
+            file_paths.append(relative_to_run(data_path, paths.run_root))
+
+        if stage.number >= 5:
+            results_path = paths.results_dir / f"{stage.slug}_fake_results.json"
+            write_text(
+                results_path,
+                json.dumps(
+                    {
+                        "stage": stage.slug,
+                        "fake": True,
+                        "kind": "results",
+                        "attempt": attempt_no,
+                    },
+                    indent=2,
+                ),
+            )
+            file_paths.append(relative_to_run(results_path, paths.run_root))
+
+        if stage.number >= 6:
+            figure_path = paths.figures_dir / f"{stage.slug}_fake_figure.svg"
+            write_text(
+                figure_path,
+                (
+                    '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120">'
+                    '<rect width="240" height="120" fill="#f5f5f5"/>'
+                    '<text x="16" y="64" font-size="18">Fake Figure</text>'
+                    "</svg>"
+                ),
+            )
+            file_paths.append(relative_to_run(figure_path, paths.run_root))
+
+        if stage.number >= 7:
+            tex_path = paths.writing_dir / f"{stage.slug}_fake_paper.tex"
+            pdf_path = paths.artifacts_dir / f"{stage.slug}_fake_paper.pdf"
+            write_text(
+                tex_path,
+                (
+                    "\\documentclass{article}\n"
+                    "% neurips style placeholder for fake operator validation\n"
+                    "\\begin{document}\n"
+                    "Fake NeurIPS-style manuscript placeholder.\n"
+                    "\\end{document}\n"
+                ),
+            )
+            write_text(pdf_path, "Fake PDF placeholder for validation.")
+            file_paths.extend(
+                [
+                    relative_to_run(tex_path, paths.run_root),
+                    relative_to_run(pdf_path, paths.run_root),
+                ]
+            )
+
+        if stage.number >= 8:
+            review_path = paths.reviews_dir / f"{stage.slug}_fake_review.md"
+            write_text(
+                review_path,
+                (
+                    f"# Fake Review Artifact: {stage.stage_title}\n\n"
+                    "This placeholder review artifact exists to validate the run layout."
+                ),
+            )
+            file_paths.append(relative_to_run(review_path, paths.run_root))
 
         stage_markdown = (
             f"# Stage {stage.number:02d}: {stage.display_name}\n\n"
@@ -441,8 +519,8 @@ Original stderr:
             f"- Prompt length for this attempt was {len(prompt.split())} words.\n"
             "- No research claim from this stage should be treated as real output.\n\n"
             "## Files Produced\n"
-            f"- `{relative_to_run(note_path, paths.run_root)}`\n"
-            f"- `{relative_to_run(stage_tmp_path, paths.run_root)}`\n\n"
+            + "\n".join(f"- `{file_path}`" for file_path in file_paths)
+            + "\n\n"
             "## Suggestions for Refinement\n"
             "1. Replace fake mode with the real Claude operator and inspect the resulting artifacts.\n"
             "2. Tighten the stage prompt to better reflect the target of actual publication-grade work.\n"

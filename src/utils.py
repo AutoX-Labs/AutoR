@@ -13,6 +13,9 @@ class StageSpec:
     number: int
     slug: str
     display_name: str
+    orchestration_pattern: str
+    execution_flow: str
+    characteristics: str
 
     @property
     def filename(self) -> str:
@@ -22,6 +25,14 @@ class StageSpec:
     def stage_title(self) -> str:
         return f"Stage {self.number:02d}: {self.display_name}"
 
+    @property
+    def pattern_summary(self) -> str:
+        return (
+            f"Pattern: {self.orchestration_pattern}\n"
+            f"Execution Flow: {self.execution_flow}\n"
+            f"Characteristics: {self.characteristics}"
+        )
+
 
 @dataclass(frozen=True)
 class RunPaths:
@@ -30,9 +41,13 @@ class RunPaths:
     memory: Path
     logs: Path
     logs_raw: Path
+    run_state: Path
+    control_dir: Path
     prompt_cache_dir: Path
     operator_state_dir: Path
     stages_dir: Path
+    knowledge_base_dir: Path
+    knowledge_base_entries: Path
     workspace_root: Path
     literature_dir: Path
     code_dir: Path
@@ -65,14 +80,70 @@ class OperatorResult:
 
 
 STAGES: list[StageSpec] = [
-    StageSpec(1, "01_literature_survey", "Literature Survey"),
-    StageSpec(2, "02_hypothesis_generation", "Hypothesis Generation"),
-    StageSpec(3, "03_study_design", "Study Design"),
-    StageSpec(4, "04_implementation", "Implementation"),
-    StageSpec(5, "05_experimentation", "Experimentation"),
-    StageSpec(6, "06_analysis", "Analysis"),
-    StageSpec(7, "07_writing", "Writing"),
-    StageSpec(8, "08_dissemination", "Dissemination"),
+    StageSpec(
+        1,
+        "01_literature_survey",
+        "Literature Survey",
+        "Parallel",
+        "Fan out literature search across multiple sources, deduplicate, and merge into a structured evidence map.",
+        "Low latency, broad coverage, and strict merge discipline for citations and evidence.",
+    ),
+    StageSpec(
+        2,
+        "02_hypothesis_generation",
+        "Hypothesis Generation",
+        "Swarm Debate",
+        "Propose, critique, and refine candidate hypotheses through adversarial iteration before convergence.",
+        "Scalable ideation, quality pressure through critique, and explicit consensus on the best direction.",
+    ),
+    StageSpec(
+        3,
+        "03_study_design",
+        "Study Design",
+        "Hierarchical",
+        "Decompose design work into protocol, variables, evaluation, and risk planning under a coordinating planner.",
+        "Structured decomposition with strong coherence control and explicit planning sub-outputs.",
+    ),
+    StageSpec(
+        4,
+        "04_implementation",
+        "Implementation",
+        "Sequential",
+        "Progress through environment setup, dependency resolution, coding, testing, and validation in order.",
+        "Shared context between steps, fail-fast behavior, and checkpointable implementation progress.",
+    ),
+    StageSpec(
+        5,
+        "05_experimentation",
+        "Experimentation",
+        "Sequential + Parallel",
+        "Run sequential setup and checkpointing, then parallelize independent ablations and experiment branches where possible.",
+        "Supports long-running autonomy, explicit recovery, and parallel experiment execution when runs are independent.",
+    ),
+    StageSpec(
+        6,
+        "06_analysis",
+        "Analysis",
+        "Hierarchical",
+        "Delegate statistics, visualization, and interpretation into specialized analysis sub-problems before aggregating conclusions.",
+        "Bottom-up aggregation with specialized analysis roles and explicit synthesis of findings.",
+    ),
+    StageSpec(
+        7,
+        "07_writing",
+        "Writing",
+        "Sequential",
+        "Move from outline to drafting, citation insertion, formatting compliance, and consistency review in order.",
+        "Iterative refinement with strong dependency on validated upstream artifacts and review readiness.",
+    ),
+    StageSpec(
+        8,
+        "08_dissemination",
+        "Dissemination",
+        "Parallel",
+        "Generate posters, slides, summaries, and outreach artifacts concurrently from the same approved source materials.",
+        "Independent outputs with a shared source of truth and concurrent artifact generation.",
+    ),
 ]
 
 REQUIRED_STAGE_HEADINGS = [
@@ -137,9 +208,13 @@ def build_run_paths(run_root: Path) -> RunPaths:
         memory=run_root / "memory.md",
         logs=run_root / "logs.txt",
         logs_raw=run_root / "logs_raw.jsonl",
+        run_state=run_root / "run_state.json",
+        control_dir=run_root / "control",
         prompt_cache_dir=run_root / "prompt_cache",
         operator_state_dir=run_root / "operator_state",
         stages_dir=run_root / "stages",
+        knowledge_base_dir=run_root / "knowledge_base",
+        knowledge_base_entries=run_root / "knowledge_base" / "entries.jsonl",
         workspace_root=workspace_root,
         literature_dir=workspace_root / "literature",
         code_dir=workspace_root / "code",
@@ -155,15 +230,23 @@ def build_run_paths(run_root: Path) -> RunPaths:
 
 def ensure_run_layout(paths: RunPaths) -> None:
     paths.run_root.mkdir(parents=True, exist_ok=True)
+    paths.control_dir.mkdir(parents=True, exist_ok=True)
     paths.prompt_cache_dir.mkdir(parents=True, exist_ok=True)
     paths.operator_state_dir.mkdir(parents=True, exist_ok=True)
     paths.stages_dir.mkdir(parents=True, exist_ok=True)
+    paths.knowledge_base_dir.mkdir(parents=True, exist_ok=True)
     paths.workspace_root.mkdir(parents=True, exist_ok=True)
 
     for directory in workspace_dirs(paths):
         directory.mkdir(parents=True, exist_ok=True)
 
-    for file_path in (paths.user_input, paths.memory, paths.logs, paths.logs_raw):
+    for file_path in (
+        paths.user_input,
+        paths.memory,
+        paths.logs,
+        paths.logs_raw,
+        paths.knowledge_base_entries,
+    ):
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.touch(exist_ok=True)
 
@@ -282,11 +365,18 @@ def build_prompt(
     stage_template: str,
     user_request: str,
     approved_memory: str,
+    kb_context: str,
     revision_feedback: str | None,
 ) -> str:
     sections = [
         "# Stage Instructions",
         stage_template.strip(),
+        "# Research Pipeline Mapping",
+        (
+            "Use the following ClawDock-aligned orchestration pattern as planning guidance for this stage. "
+            "AutoR still executes one stage attempt at a time, but the internal work should reflect this pattern."
+        ),
+        stage.pattern_summary,
         "# Required Stage Summary Format",
         (
             "You must create or overwrite the stage summary markdown file using exactly the "
@@ -310,6 +400,8 @@ def build_prompt(
         user_request.strip(),
         "# Approved Memory",
         approved_memory.strip() or "_None yet._",
+        "# Knowledge Base Context",
+        kb_context.strip() or "No relevant knowledge-base entries yet.",
         "# Revision Feedback",
         revision_feedback.strip() if revision_feedback else "None.",
     ]
@@ -320,6 +412,7 @@ def build_continuation_prompt(
     stage: StageSpec,
     stage_template: str,
     paths: RunPaths,
+    kb_context: str,
     revision_feedback: str | None,
 ) -> str:
     current_draft = paths.stage_tmp_file(stage)
@@ -333,6 +426,12 @@ def build_continuation_prompt(
         ),
         "# Stage Instructions",
         stage_template.strip(),
+        "# Research Pipeline Mapping",
+        (
+            "Use the following ClawDock-aligned orchestration pattern as planning guidance for this stage. "
+            "Continue the current work in a way that matches the intended research execution style."
+        ),
+        stage.pattern_summary,
         "# Required Stage Summary Format",
         (
             "You must create or overwrite the stage summary markdown file using exactly the "
@@ -352,6 +451,8 @@ def build_continuation_prompt(
             "8. Do not leave placeholder text such as [In progress], [Pending], [TODO], [TBD], or similar unfinished markers.\n"
             "9. If the existing stage work is partially correct, keep the correct parts and extend them rather than replacing them blindly."
         ),
+        "# Knowledge Base Context",
+        kb_context.strip() or "No relevant knowledge-base entries yet.",
         "# New Feedback",
         revision_feedback.strip()
         if revision_feedback
@@ -597,6 +698,10 @@ def _extract_path_references(text: str) -> list[str]:
         paths.append(normalized)
 
     return paths
+
+
+def extract_path_references(text: str) -> list[str]:
+    return _extract_path_references(text)
 
 
 def _existing_files(directory: Path) -> list[Path]:
