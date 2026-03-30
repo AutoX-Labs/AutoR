@@ -352,4 +352,4 @@ Join the project community channels:
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=WeaveX-Labs/AutoR&type=Date)](https://star-history.com/#WeaveX-Labs/AutoR&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=WeaveX-Labs/AutoR&type=Date)](https://star-history.com/#AutoX-Labs/AutoR&Date)
