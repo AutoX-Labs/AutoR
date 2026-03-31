@@ -323,9 +323,15 @@ class ResearchManager:
                 result = repair_result
 
             if not result.stage_file_path.exists():
-                mark_stage_failed_manifest(paths, stage, "stage_summary_missing")
-                raise RuntimeError(
-                    f"Stage summary draft was not generated for {stage.slug}: {result.stage_file_path}"
+                fallback_text = "\n\n".join(
+                    part for part in [result.stdout, result.stderr] if part
+                )
+                result = self._materialize_missing_stage_draft(
+                    paths=paths,
+                    stage=stage,
+                    attempt_no=attempt_no,
+                    source="primary attempt and repair",
+                    fallback_text=fallback_text,
                 )
 
             stage_markdown = read_text(result.stage_file_path)
@@ -370,8 +376,17 @@ class ResearchManager:
                 )
 
                 if not repair_result.stage_file_path.exists():
-                    raise RuntimeError(
-                        f"Stage summary repair failed for {stage.slug}: {repair_result.stage_file_path}"
+                    fallback_text = "\n\n".join(
+                        part
+                        for part in [result.stdout, result.stderr, repair_result.stdout, repair_result.stderr]
+                        if part
+                    )
+                    repair_result = self._materialize_missing_stage_draft(
+                        paths=paths,
+                        stage=stage,
+                        attempt_no=attempt_no,
+                        source="validation repair",
+                        fallback_text=fallback_text,
                     )
 
                 stage_markdown = read_text(repair_result.stage_file_path)
@@ -642,6 +657,42 @@ class ResearchManager:
             lines.append(line.rstrip())
 
         return "\n".join(lines).strip()
+
+    def _materialize_missing_stage_draft(
+        self,
+        paths: RunPaths,
+        stage: StageSpec,
+        attempt_no: int,
+        source: str,
+        fallback_text: str,
+    ):
+        draft_path = paths.stage_tmp_file(stage)
+        normalized_markdown = canonicalize_stage_markdown(
+            stage=stage,
+            memory_text=read_text(paths.memory),
+            markdown="",
+            fallback_text=(
+                f"AutoR generated this local fallback stage draft because the {source} "
+                "did not produce a stage summary file.\n\n"
+                + (fallback_text.strip() if fallback_text.strip() else "No stdout or stderr was captured.")
+            ),
+        )
+        write_text(draft_path, normalized_markdown)
+        append_log_entry(
+            paths.logs,
+            f"{stage.slug} attempt {attempt_no} local_fallback_draft",
+            (
+                f"Generated a local fallback stage draft after missing stage summary during {source}.\n"
+                f"draft: {draft_path}\n\n"
+                "Fallback markdown preview:\n"
+                f"{truncate_text(normalized_markdown, max_chars=4000)}"
+            ),
+        )
+        self._print(
+            f"{stage.stage_title} did not produce a stage summary file during {source}. "
+            "Generated a local fallback draft and continuing recovery..."
+        )
+        return type("FallbackResult", (), {"stage_file_path": draft_path, "stdout": fallback_text, "stderr": ""})()
 
     def _print(self, text: str) -> None:
         print(text, file=self.output_stream)

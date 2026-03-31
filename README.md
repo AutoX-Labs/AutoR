@@ -1,10 +1,17 @@
 # AutoR
 
-AutoR is a terminal-first research workflow runner for long-form AI-assisted research. It takes a research goal, runs a fixed 8-stage pipeline with Claude Code, and requires explicit human approval after every stage before the workflow can continue.
+> A terminal-first research workflow runner for long-form AI-assisted research.
 
-Each run is isolated under `runs/<run_id>/`. AutoR is intentionally file-based: prompts, logs, stage outputs, and research artifacts are all written into the run directory so the workflow is inspectable, resumable, and auditable.
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![Workflow](https://img.shields.io/badge/Workflow-8%20Stages-black)
+![Agent](https://img.shields.io/badge/Agent-Claude%20Code-orange)
+![Interface](https://img.shields.io/badge/Interface-Terminal-green)
 
-## Overview
+AutoR takes a research goal, runs a fixed 8-stage pipeline with Claude Code, and requires explicit human approval after every stage before the workflow can continue. Every run is isolated under `runs/<run_id>/`, and all prompts, logs, stage outputs, and research artifacts stay inside that run directory.
+
+The project is intentionally file-based. The goal is not just to produce text, but to make long-form AI research inspectable, resumable, auditable, and artifact-driven.
+
+## ✨ What AutoR Does
 
 AutoR uses a fixed stage order:
 
@@ -17,73 +24,65 @@ AutoR uses a fixed stage order:
 7. `07_writing`
 8. `08_dissemination`
 
-Core constraints:
+Core guarantees:
 
-- One Claude invocation per stage attempt.
+- One primary Claude invocation per stage attempt. Repair and fallback invocations are operator-managed.
 - Every stage writes a draft summary to `stages/<stage>.tmp.md`.
 - AutoR validates the draft, then promotes it to `stages/<stage>.md`.
 - Human approval is mandatory after every validated stage.
 - Each stage keeps its own Claude conversation state.
 - `1/2/3/4` continue the current stage conversation with refinement feedback. Only `5` advances. `6` aborts.
 - Approved stage summaries are appended to `memory.md`.
+- `main.py` defaults to `--model sonnet`, but the model can be overridden per run.
 
-The main code lives in:
+## 🚀 Quick Start
 
-- [main.py](main.py)
-- [src/manager.py](src/manager.py)
-- [src/operator.py](src/operator.py)
-- [src/utils.py](src/utils.py)
-- [src/prompts/](src/prompts)
+Start a new run:
 
-## Code Structure
-
-```mermaid
-flowchart LR
-    A[main.py] --> B[src/manager.py]
-    B --> C[src/operator.py]
-    B --> D[src/utils.py]
-    B --> E[src/prompts/*]
-    C --> D
+```bash
+python main.py
 ```
 
-File boundaries:
-
-- [main.py](main.py): CLI entry point. Starts a new run or resumes an existing run.
-- [src/manager.py](src/manager.py): Owns the 8-stage loop, approval flow, repair flow, resume, redo-stage logic, and stage-level continuation policy.
-- [src/operator.py](src/operator.py): Invokes Claude CLI, streams output live, persists stage session IDs, resumes the same stage conversation for refinement, and falls back to a fresh session if resume fails.
-- [src/utils.py](src/utils.py): Stage metadata, prompt assembly, run paths, markdown validation, and artifact validation.
-- [src/prompts/](src/prompts): Per-stage prompt templates.
-
-## Workspace Structure
-
-Each run contains `user_input.txt`, `memory.md`, `knowledge_base/`, `run_manifest.json`, `prompt_cache/`, `operator_state/`, `stages/`, `workspace/`, `logs.txt`, and `logs_raw.jsonl`. The substantive research payload lives in `workspace/`.
-
-```mermaid
-flowchart TD
-    A[workspace/] --> B[literature/]
-    A --> C[code/]
-    A --> D[data/]
-    A --> E[results/]
-    A --> F[writing/]
-    A --> G[figures/]
-    A --> H[artifacts/]
-    A --> I[notes/]
-    A --> J[reviews/]
+Start a new run with an inline goal:
+```bash
+python main.py --goal "Your research goal here"
 ```
 
-Directory boundaries:
+Run fake mode:
 
-- `literature/`: papers, benchmark notes, survey tables, reading artifacts.
-- `code/`: runnable pipeline code, scripts, configs, and method implementations.
-- `data/`: machine-readable datasets, manifests, processed splits, caches, and loaders.
-- `results/`: machine-readable metrics, predictions, ablations, tables, and evaluation outputs.
-- `writing/`: manuscript sources, LaTeX, section drafts, tables, and bibliography.
-- `figures/`: plots, diagrams, charts, and paper figures.
-- `artifacts/`: compiled PDFs and packaged deliverables.
-- `notes/`: temporary notes and setup material.
-- `reviews/`: critique notes, threat-to-validity notes, and readiness reviews.
+```bash
+python main.py --fake-operator --goal "Smoke test"
+```
 
-## Workflow
+Run with the default model explicitly:
+
+```bash
+python main.py --model sonnet
+```
+
+Run with a different Claude model alias:
+
+```bash
+python main.py --model opus
+```
+
+Resume the latest run:
+
+```bash
+python main.py --resume-run latest
+```
+
+Redo from a specific stage inside the same run:
+
+```bash
+python main.py --resume-run 20260329_210252 --redo-stage 03
+```
+
+`--resume-run ... --redo-stage ...` continues inside the existing run directory. It does not create a new run.
+
+Valid stage identifiers include `03`, `3`, and `03_study_design`.
+
+## 🗺️ Workflow
 
 ```mermaid
 flowchart TD
@@ -129,12 +128,12 @@ flowchart TD
     H8 -- Abort --> X
 ```
 
-## Stage Attempt Loop
+## 🔁 Stage Attempt Loop
 
 ```mermaid
 flowchart TD
-    A[Build prompt from template + goal + memory + optional feedback] --> B[Run Claude Code once]
-    B --> C[Write draft stage summary]
+    A[Build prompt from template + goal + memory + optional feedback] --> B[Start or resume stage session]
+    B --> C[Claude writes draft stage summary]
     C --> D[Validate markdown and required artifacts]
     D --> E{Valid?}
     E -- No --> F[Repair, normalize, or rerun current stage]
@@ -154,11 +153,12 @@ Stage-loop rules:
 
 - Claude never writes directly to the final stage file.
 - The final stage file exists only after validation succeeds.
-- The first attempt of a stage starts a fresh Claude session; later refinements continue that same stage session.
-- If validation still fails after repair and normalization, AutoR keeps working inside the same stage and can fall back to a fresh session only if resume fails.
+- The first attempt of a stage starts a fresh Claude session.
+- Later refinements reuse the same stage session whenever possible.
+- If validation still fails after repair and normalization, AutoR keeps working inside the same stage and falls back to a fresh session only if resume fails.
 - The stage loop is controlled by AutoR, not by Claude.
 
-## Prompt and Execution
+## 🧠 Execution Model
 
 For each stage attempt, AutoR assembles a prompt from:
 
@@ -170,7 +170,9 @@ For each stage attempt, AutoR assembles a prompt from:
 6. optional refinement feedback
 7. for continuation attempts, the current stage draft/final files and existing workspace state
 
-AutoR writes the assembled prompt to `runs/<run_id>/prompt_cache/`, stores per-stage session IDs in `runs/<run_id>/operator_state/`, and invokes Claude in streaming mode through [src/operator.py](src/operator.py):
+AutoR writes the assembled prompt to `runs/<run_id>/prompt_cache/`, stores per-stage session IDs in `runs/<run_id>/operator_state/`, and invokes Claude in streaming mode through [src/operator.py](src/operator.py).
+
+First attempt for a stage:
 
 ```bash
 claude --model <model> \
@@ -182,11 +184,85 @@ claude --model <model> \
   --verbose
 ```
 
-Refinement attempts on the same stage reuse the same `stage_session_id` and call Claude with `--resume <stage_session_id>` instead of opening a new stage conversation.
+Continuation attempt for the same stage:
 
-The streamed Claude output is shown live in the terminal and also captured in `logs_raw.jsonl`.
+```bash
+claude --model <model> \
+  --permission-mode bypassPermissions \
+  --dangerously-skip-permissions \
+  --resume <stage_session_id> \
+  -p @runs/<run_id>/prompt_cache/<stage>_attempt_<nn>.prompt.md \
+  --output-format stream-json \
+  --verbose
+```
 
-## Validation
+Refinement attempts reuse the same `stage_session_id` instead of opening a new stage conversation. The streamed Claude output is shown live in the terminal and also captured in `logs_raw.jsonl`.
+
+## 🏗️ Architecture
+
+The main code lives in:
+
+- [main.py](main.py)
+- [src/manager.py](src/manager.py)
+- [src/operator.py](src/operator.py)
+- [src/utils.py](src/utils.py)
+- [src/prompts/](src/prompts)
+
+```mermaid
+flowchart LR
+    A[main.py] --> B[src/manager.py]
+    B --> C[src/operator.py]
+    B --> D[src/utils.py]
+    B --> E[src/prompts/*]
+    C --> D
+```
+
+File boundaries:
+
+- [main.py](main.py): CLI entry point. Starts a new run or resumes an existing run.
+- [src/manager.py](src/manager.py): Owns the 8-stage loop, approval flow, repair flow, resume, redo-stage logic, and stage-level continuation policy.
+- [src/operator.py](src/operator.py): Invokes Claude CLI, streams output live, persists stage session IDs, resumes the same stage conversation for refinement, and falls back to a fresh session if resume fails.
+- [src/utils.py](src/utils.py): Stage metadata, prompt assembly, run paths, markdown validation, and artifact validation.
+- [src/prompts/](src/prompts): Per-stage prompt templates.
+
+## 📂 Run Layout
+
+Each run contains `user_input.txt`, `memory.md`, `prompt_cache/`, `operator_state/`, `stages/`, `workspace/`, `logs.txt`, and `logs_raw.jsonl`. The substantive research payload lives in `workspace/`.
+
+```mermaid
+flowchart TD
+    A[workspace/] --> B[literature/]
+    A --> C[code/]
+    A --> D[data/]
+    A --> E[results/]
+    A --> F[writing/]
+    A --> G[figures/]
+    A --> H[artifacts/]
+    A --> I[notes/]
+    A --> J[reviews/]
+```
+
+Workspace directories:
+
+- `literature/`: papers, benchmark notes, survey tables, reading artifacts.
+- `code/`: runnable pipeline code, scripts, configs, and method implementations.
+- `data/`: machine-readable datasets, manifests, processed splits, caches, and loaders.
+- `results/`: machine-readable metrics, predictions, ablations, tables, and evaluation outputs.
+- `writing/`: manuscript sources, LaTeX, section drafts, tables, and bibliography.
+- `figures/`: plots, diagrams, charts, and paper figures.
+- `artifacts/`: compiled PDFs and packaged deliverables.
+- `notes/`: temporary notes and setup material.
+- `reviews/`: critique notes, threat-to-validity notes, and readiness reviews.
+
+Other run state:
+
+- `memory.md`: approved cross-stage memory only.
+- `prompt_cache/`: exact prompts used for stage attempts and repairs.
+- `operator_state/`: per-stage Claude session IDs.
+- `stages/`: draft and promoted stage summaries.
+- `logs.txt` and `logs_raw.jsonl`: workflow logs and raw Claude stream output.
+
+## ✅ Validation
 
 AutoR validates both the stage markdown and the stage artifacts.
 
@@ -298,12 +374,12 @@ Platform-alignment layer under `src/platform/` now includes:
 - messaging outbox integration
 - retry/fallback/classification/checkpoint primitives
 
-## Scope
+## 📌 Scope
 
 Included:
 
 - fixed 8-stage workflow
-- one Claude invocation per stage attempt
+- one primary Claude invocation per stage attempt
 - mandatory human approval after every stage
 - stage-local Claude conversation continuation within a stage
 - AI refine, custom refine, approve, and abort
@@ -332,7 +408,34 @@ Out of scope:
 - concurrent stage execution
 - automatic reviewer scoring
 
-## Notes
+## 📝 Notes
 
 - `runs/` is gitignored.
 - AutoR implements the workflow control layer. Submission-grade output still depends on the environment, available tools, data access, model access, and the quality of the stage attempts.
+
+## 🛣️ Roadmap
+
+Open work is tracked here so contributors can pick up clear, decoupled improvements.
+
+- ~~Stage-local continuation sessions.~~ Keep one Claude conversation per stage, reuse it for `1/2/3/4` refinement, and fall back to a fresh session only when resume fails. This is now implemented in the operator and manager flow.
+- ~~Artifact-level validation for non-toy outputs.~~ Enforce machine-readable data, result files, figures, LaTeX sources, PDF output, and review artifacts at the right stages. This is now part of the workflow validation path.
+- Cross-stage rollback and invalidation. When a later stage reveals that an earlier design decision is wrong, the workflow should be able to jump back to an earlier stage and mark downstream stages as stale. This is the biggest current control-flow gap.
+- Machine-readable run manifest. Add a single source of truth such as `run_manifest.json` to track stage status, approval state, stale dependencies, session IDs, and key artifact pointers. This should make both automation and future UI work much cleaner.
+- Continuation handoff compression. Add a short machine-generated stage handoff file that summarizes what is already correct, what is missing, and which files matter most. This should reduce context growth and make continuation more stable over long runs.
+- Result schema and artifact indexing. Standardize `workspace/data/`, `workspace/results/`, and `workspace/figures/` around explicit schemas and generate an artifact index automatically. Later stages and the UI should consume structured metadata instead of scanning ad hoc files.
+- Writing pipeline hardening. Turn Stage 07 into a reliable manuscript production pipeline with stable NeurIPS LaTeX structure, bibliography handling, table and figure inclusion, and reproducible PDF compilation. The goal is a submission-ready paper package, not just writing notes.
+- Review and dissemination package. Expand Stage 08 so it produces readiness checklists, threats-to-validity notes, artifact manifests, release notes, and external-facing research bundles. The final stage should feel like packaging a paper for real release, not just wrapping up text.
+- Frontend run dashboard. Build a lightweight UI that can browse runs, stage status, summaries, logs, artifacts, and validation failures. It should read from the run directory and manifest rather than introducing a database first.
+- README and open-source assets. Keep refining the README and add `assets/` images such as workflow diagrams, UI screenshots, and artifact examples. This is important for open-source clarity, onboarding, and project presentation.
+
+## 🌍 Community
+
+Join the project community channels:
+
+| Discord | WeChat | WhatsApp |
+| --- | --- | --- |
+| <img src="assets/discord.jpg" alt="Discord QR" width="180" /> | <img src="assets/wechat.jpg" alt="WeChat QR" width="180" /> | <img src="assets/whatsapp.jpg" alt="WhatsApp QR" width="180" /> |
+
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=WeaveX-Labs/AutoR&type=Date)](https://star-history.com/#AutoX-Labs/AutoR&Date)
