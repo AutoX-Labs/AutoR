@@ -44,7 +44,6 @@ python main.py
 ```
 
 Start a new run with an inline goal:
-
 ```bash
 python main.py --goal "Your research goal here"
 ```
@@ -298,6 +297,83 @@ Artifact requirements by stage:
 
 A run with only markdown notes does not pass validation.
 
+## CLI
+
+Start a new run:
+
+```bash
+python main.py
+```
+
+Start a new run with an inline goal:
+
+```bash
+python main.py --goal "Your research goal here"
+```
+
+Run fake mode:
+
+```bash
+python main.py --fake-operator --goal "Smoke test"
+```
+
+Resume the latest run:
+
+```bash
+python main.py --resume-run latest
+```
+
+Resume a specific run:
+
+```bash
+python main.py --resume-run 20260329_210252
+```
+
+Redo from a specific stage inside the same run:
+
+```bash
+python main.py --resume-run 20260329_210252 --redo-stage 03
+```
+
+Roll back to a specific stage and mark downstream stages stale:
+
+```bash
+python main.py --resume-run 20260329_210252 --rollback-stage 03
+```
+
+`--resume-run ... --redo-stage ...` continues inside the existing run directory. It does not create a new run.
+
+Valid stage identifiers include `03`, `3`, and `03_study_design`.
+
+Inspect structured run state:
+
+```bash
+python main.py --resume-run latest --show-status
+```
+
+Search the per-run knowledge base:
+
+```bash
+python main.py --resume-run latest --kb-search "hypothesis evidence" --kb-limit 8
+```
+
+Platform-alignment layer under `src/platform/` now includes:
+
+- orchestration patterns: sequential, parallel, hierarchical, swarm
+- research pipeline router and stage-specific workflow engines
+- literature-source adapters plus citation validation
+- multi-agent hypothesis debate workflow
+- overnight playbook execution with self-monitoring primitives
+- A2A/MCP-style protocol bridge primitives
+- agent runtime manager and command-style research agents
+- semantic retrieval for Knowledge Base ranking
+- Foundry document generation for paper/poster/slides/social bundles
+- observability collectors for spans and metrics
+- RBAC scope checks for API access
+- sandbox execution policy and runner abstractions
+- messaging outbox integration
+- retry/fallback/classification/checkpoint primitives
+
 ## 📌 Scope
 
 Included:
@@ -313,10 +389,20 @@ Included:
 - draft-to-final stage promotion
 - resume and redo-stage support
 - artifact-level validation
+- manifest-first lifecycle tracking via `run_manifest.json`
+- per-run Knowledge Base with prompt injection and CLI search
+- stage-pattern metadata aligned with the ClawDock research design
+- platform-alignment modules for orchestration, protocols, runtimes, Foundry, observability, security, sandboxing, messaging, and deployment
+- machine-readable `run_manifest.json` stage state tracking
+- stage handoff summaries under `handoff/`
+- cross-stage rollback with downstream stale invalidation
+- operator attempt/session recovery state under `operator_state/`
+- Stage 07 paper package generation with LaTeX/bib/table/checklist/PDF artifacts
+- Stage 08 review and dissemination package generation with readiness/release materials
 
 Out of scope:
 
-- multi-agent orchestration
+- true multi-agent orchestration execution
 - database-backed state
 - web UI
 - concurrent stage execution
