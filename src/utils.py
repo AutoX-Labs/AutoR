@@ -34,6 +34,7 @@ class RunPaths:
     memory: Path
     run_config: Path
     run_manifest: Path
+    artifact_index: Path
     logs: Path
     logs_raw: Path
     prompt_cache_dir: Path
@@ -151,6 +152,7 @@ def build_run_paths(run_root: Path) -> RunPaths:
         memory=run_root / "memory.md",
         run_config=run_root / "run_config.json",
         run_manifest=run_root / "run_manifest.json",
+        artifact_index=run_root / "artifact_index.json",
         logs=run_root / "logs.txt",
         logs_raw=run_root / "logs_raw.jsonl",
         prompt_cache_dir=run_root / "prompt_cache",
