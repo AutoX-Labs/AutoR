@@ -26,10 +26,12 @@ from .utils import (
     initialize_run_config,
     load_prompt_template,
     parse_refinement_suggestions,
+    read_attempt_count,
     read_text,
     truncate_text,
     validate_stage_artifacts,
     validate_stage_markdown,
+    write_attempt_count,
     write_text,
 )
 
@@ -132,11 +134,12 @@ class ResearchManager:
         return pending
 
     def _run_stage(self, paths: RunPaths, stage: StageSpec) -> bool:
-        attempt_no = 1
+        attempt_no = read_attempt_count(paths, stage) + 1
         revision_feedback: str | None = None
         continue_session = False
 
         while True:
+            write_attempt_count(paths, stage, attempt_no)
             self._print(f"\nRunning {stage.stage_title} (attempt {attempt_no})...")
             prompt = self._build_stage_prompt(paths, stage, revision_feedback, continue_session)
             append_log_entry(

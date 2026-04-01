@@ -739,6 +739,20 @@ def _count_non_markdown_files(directory: Path) -> int:
     return sum(1 for path in _existing_files(directory) if path.suffix.lower() not in {".md", ".txt"})
 
 
+def read_attempt_count(paths: RunPaths, stage: StageSpec) -> int:
+    path = paths.operator_state_dir / f"{stage.slug}.attempt_count.txt"
+    if path.exists():
+        text = read_text(path).strip()
+        if text.isdigit():
+            return int(text)
+    return 0
+
+
+def write_attempt_count(paths: RunPaths, stage: StageSpec, count: int) -> None:
+    path = paths.operator_state_dir / f"{stage.slug}.attempt_count.txt"
+    write_text(path, str(count))
+
+
 def _load_template_registry() -> dict[str, dict[str, str]]:
     if not TEMPLATE_REGISTRY_PATH.exists():
         return {}

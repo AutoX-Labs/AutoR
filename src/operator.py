@@ -4,6 +4,8 @@ import json
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from pathlib import Path
 from typing import TextIO
@@ -30,11 +32,13 @@ class ClaudeOperator:
         model: str = "sonnet",
         fake_mode: bool = False,
         output_stream: TextIO = sys.stdout,
+        stage_timeout: int = 14400,
     ) -> None:
         self.command = command
         self.model = model
         self.fake_mode = fake_mode
         self.output_stream = output_stream
+        self.stage_timeout = stage_timeout
 
     def run_stage(
         self,
@@ -325,9 +329,26 @@ Original stderr:
         non_json_lines: list[str] = []
         ended_with_newline = True
         observed_session_id: str | None = None
+        timed_out = threading.Event()
+        start_time = time.monotonic()
+
+        def _on_timeout() -> None:
+            timed_out.set()
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+        timer = threading.Timer(self.stage_timeout, _on_timeout)
+        timer.daemon = True
+        timer.start()
 
         try:
             for raw_line in process.stdout:
+                if timed_out.is_set():
+                    break
+
                 self.output_stream.write(raw_line)
                 self.output_stream.flush()
 
@@ -360,15 +381,51 @@ Original stderr:
                     observed_session_id = self._extract_session_id(payload)
                 extracted_fragments.extend(extract_stream_text_fragments(payload))
         except KeyboardInterrupt:
+            elapsed = time.monotonic() - start_time
             process.terminate()
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+            append_jsonl(
+                paths.logs_raw,
+                {
+                    "_meta": {
+                        "stage": stage.slug,
+                        "attempt": attempt_no,
+                        "mode": mode,
+                        "event": "keyboard_interrupt",
+                        "elapsed_seconds": round(elapsed, 1),
+                    }
+                },
+            )
             raise
         finally:
+            timer.cancel()
             process.stdout.close()
+
+        if timed_out.is_set():
+            elapsed = time.monotonic() - start_time
+            append_jsonl(
+                paths.logs_raw,
+                {
+                    "_meta": {
+                        "stage": stage.slug,
+                        "attempt": attempt_no,
+                        "mode": mode,
+                        "event": "stage_timeout",
+                        "timeout_seconds": self.stage_timeout,
+                        "elapsed_seconds": round(elapsed, 1),
+                    }
+                },
+            )
+            stdout_text = self._compose_stdout_text(
+                extracted_fragments=extracted_fragments,
+                non_json_lines=non_json_lines,
+                raw_lines=raw_lines,
+            )
+            return -1, stdout_text, "Stage timed out", observed_session_id
 
         exit_code = process.wait()
         if raw_lines and not ended_with_newline:
@@ -541,4 +598,7 @@ Original stderr:
 
     def _looks_like_resume_failure(self, stdout_text: str, stderr_text: str) -> bool:
         combined = "\n".join(part for part in [stdout_text, stderr_text] if part).lower()
-        return "no conversation found with session id" in combined or "resume" in combined and "not found" in combined
+        return (
+            "no conversation found with session id" in combined
+            or ("resume" in combined and "not found" in combined)
+        )
