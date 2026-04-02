@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import TextIO
 
+from .terminal_ui import TerminalUI
 from .utils import (
     DEFAULT_REFINEMENT_SUGGESTIONS,
     FIXED_STAGE_OPTIONS,
@@ -30,11 +31,13 @@ class ClaudeOperator:
         model: str = "sonnet",
         fake_mode: bool = False,
         output_stream: TextIO = sys.stdout,
+        ui: TerminalUI | None = None,
     ) -> None:
         self.command = command
         self.model = model
         self.fake_mode = fake_mode
         self.output_stream = output_stream
+        self.ui = ui or TerminalUI(output_stream=output_stream)
 
     def run_stage(
         self,
@@ -325,12 +328,10 @@ Original stderr:
         non_json_lines: list[str] = []
         ended_with_newline = True
         observed_session_id: str | None = None
+        tool_names: dict[str, str] = {}
 
         try:
             for raw_line in process.stdout:
-                self.output_stream.write(raw_line)
-                self.output_stream.flush()
-
                 ended_with_newline = raw_line.endswith("\n")
                 line = raw_line.rstrip("\n")
                 raw_lines.append(line)
@@ -353,12 +354,14 @@ Original stderr:
                         },
                     )
                     non_json_lines.append(stripped)
+                    self.ui.show_raw_stream_line(stripped)
                     continue
 
                 append_jsonl(paths.logs_raw, payload)
                 if observed_session_id is None:
                     observed_session_id = self._extract_session_id(payload)
                 extracted_fragments.extend(extract_stream_text_fragments(payload))
+                self.ui.show_stream_event(payload, tool_names)
         except KeyboardInterrupt:
             process.terminate()
             try:
@@ -415,6 +418,7 @@ Original stderr:
         previous_summaries = approved_stage_summaries(read_text(paths.memory))
         note_path = paths.notes_dir / f"{stage.slug}_fake_operator_note.md"
         stage_tmp_path = paths.stage_tmp_file(stage)
+        user_goal = read_text(paths.user_input).strip()
         write_text(
             note_path,
             (
@@ -425,36 +429,90 @@ Original stderr:
             ),
         )
 
-        stage_markdown = (
-            f"# Stage {stage.number:02d}: {stage.display_name}\n\n"
-            "## Objective\n"
-            f"Validate the workflow path for {stage.display_name} and confirm that the "
-            "manager, operator, and filesystem contracts are functioning.\n\n"
-            "## Previously Approved Stage Summaries\n"
-            f"{previous_summaries}\n\n"
-            "## What I Did\n"
-            "- Executed fake-operator mode instead of invoking Claude.\n"
-            f"- Created a placeholder artifact at `{relative_to_run(note_path, paths.run_root)}`.\n"
-            f"- Simulated a complete stage attempt for `{stage.slug}`.\n\n"
-            "## Key Results\n"
-            "- The orchestration loop, run layout, and stage-summary validation path are active.\n"
-            f"- Prompt length for this attempt was {len(prompt.split())} words.\n"
-            "- No research claim from this stage should be treated as real output.\n\n"
-            "## Files Produced\n"
-            f"- `{relative_to_run(note_path, paths.run_root)}`\n"
-            f"- `{relative_to_run(stage_tmp_path, paths.run_root)}`\n\n"
-            "## Suggestions for Refinement\n"
-            "1. Replace fake mode with the real Claude operator and inspect the resulting artifacts.\n"
-            "2. Tighten the stage prompt to better reflect the target of actual publication-grade work.\n"
-            "3. Add stronger expectations for the concrete artifacts and files outputs from this stage.\n\n"
-            "## Your Options\n"
-            "1. Use suggestion 1\n"
-            "2. Use suggestion 2\n"
-            "3. Use suggestion 3\n"
-            "4. Refine with your own feedback\n"
-            "5. Approve and continue\n"
-            "6. Abort\n"
-        )
+        if stage.number == 1 and "smoke test" in user_goal.lower():
+            intro_path = paths.notes_dir / "autor_intro.md"
+            write_text(
+                intro_path,
+                (
+                    "# AutoR Overview\n\n"
+                    "AutoR is a terminal-first, file-based, human-in-the-loop research workflow runner.\n\n"
+                    "It executes a fixed 8-stage pipeline:\n"
+                    "1. Literature survey\n"
+                    "2. Hypothesis generation\n"
+                    "3. Study design\n"
+                    "4. Implementation\n"
+                    "5. Experimentation\n"
+                    "6. Analysis\n"
+                    "7. Writing\n"
+                    "8. Dissemination\n\n"
+                    "Every stage writes artifacts into an isolated run directory and must be explicitly approved by the user.\n"
+                ),
+            )
+            stage_markdown = (
+                f"# Stage {stage.number:02d}: {stage.display_name}\n\n"
+                "## Objective\n"
+                "Introduce AutoR during a fake-mode smoke test while demonstrating the terminal UI, "
+                "stage summary contract, and approval loop.\n\n"
+                "## Previously Approved Stage Summaries\n"
+                f"{previous_summaries}\n\n"
+                "## What I Did\n"
+                "- Entered fake-operator mode so the full terminal workflow could be demonstrated without calling Claude.\n"
+                "- Generated a short markdown introduction to AutoR for recording and smoke-test purposes.\n"
+                f"- Wrote overview material to `{relative_to_run(intro_path, paths.run_root)}` and preserved the fake operator note at `{relative_to_run(note_path, paths.run_root)}`.\n"
+                f"- Produced a valid stage summary draft at `{relative_to_run(stage_tmp_path, paths.run_root)}`.\n\n"
+                "## Key Results\n"
+                "- AutoR is a terminal-first, file-based, human-in-the-loop research workflow runner.\n"
+                "- The workflow is fixed into 8 stages: literature, hypothesis, design, implementation, experimentation, analysis, writing, and dissemination.\n"
+                "- Every run is isolated under `runs/<run_id>/`, with prompts, logs, stage summaries, and workspace artifacts written to disk.\n"
+                "- The UI smoke test confirms the current terminal interface, menu interaction, and stage-summary rendering path are working.\n"
+                "- This output is a product demo and workflow intro, not a real research result.\n\n"
+                "## Files Produced\n"
+                f"- `{relative_to_run(intro_path, paths.run_root)}`\n"
+                f"- `{relative_to_run(note_path, paths.run_root)}`\n"
+                f"- `{relative_to_run(stage_tmp_path, paths.run_root)}`\n\n"
+                "## Suggestions for Refinement\n"
+                "1. Switch from fake mode to the real Claude operator and record a live stage execution.\n"
+                "2. Tune the terminal theme, colors, and screen layout for recording aesthetics.\n"
+                "3. Expand the intro note with a concrete example run and artifact tour before moving on.\n\n"
+                "## Your Options\n"
+                "1. Use suggestion 1\n"
+                "2. Use suggestion 2\n"
+                "3. Use suggestion 3\n"
+                "4. Refine with your own feedback\n"
+                "5. Approve and continue\n"
+                "6. Abort\n"
+            )
+        else:
+            stage_markdown = (
+                f"# Stage {stage.number:02d}: {stage.display_name}\n\n"
+                "## Objective\n"
+                f"Validate the workflow path for {stage.display_name} and confirm that the "
+                "manager, operator, and filesystem contracts are functioning.\n\n"
+                "## Previously Approved Stage Summaries\n"
+                f"{previous_summaries}\n\n"
+                "## What I Did\n"
+                "- Executed fake-operator mode instead of invoking Claude.\n"
+                f"- Created a placeholder artifact at `{relative_to_run(note_path, paths.run_root)}`.\n"
+                f"- Simulated a complete stage attempt for `{stage.slug}`.\n\n"
+                "## Key Results\n"
+                "- The orchestration loop, run layout, and stage-summary validation path are active.\n"
+                f"- Prompt length for this attempt was {len(prompt.split())} words.\n"
+                "- No research claim from this stage should be treated as real output.\n\n"
+                "## Files Produced\n"
+                f"- `{relative_to_run(note_path, paths.run_root)}`\n"
+                f"- `{relative_to_run(stage_tmp_path, paths.run_root)}`\n\n"
+                "## Suggestions for Refinement\n"
+                "1. Replace fake mode with the real Claude operator and inspect the resulting artifacts.\n"
+                "2. Tighten the stage prompt to better reflect the target of actual publication-grade work.\n"
+                "3. Add stronger expectations for the concrete artifacts and files outputs from this stage.\n\n"
+                "## Your Options\n"
+                "1. Use suggestion 1\n"
+                "2. Use suggestion 2\n"
+                "3. Use suggestion 3\n"
+                "4. Refine with your own feedback\n"
+                "5. Approve and continue\n"
+                "6. Abort\n"
+            )
         write_text(stage_tmp_path, stage_markdown)
         append_jsonl(
             paths.logs_raw,

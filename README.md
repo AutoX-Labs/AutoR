@@ -94,6 +94,14 @@ Highlighted outcomes from that run:
 - the system produced a full NeurIPS-style paper package
 - the final run preserved the full human-in-the-loop approval trail
 
+### Terminal Experience
+
+AutoR is designed for terminal-first execution, but the interaction layer is not limited to raw logs and plain prompts. The current UI supports banner-style startup, colored stage panels, parsed Claude event streams, wrapped markdown summaries, and a menu-driven approval loop suitable for demos and recordings.
+
+<p align="center">
+  <img src="assets/terminal.png" alt="AutoR terminal UI" width="92%" />
+</p>
+
 ### Example Figures
 
 <table>

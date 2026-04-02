@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TextIO
 
 from .operator import ClaudeOperator
+from .terminal_ui import TerminalUI
 from .writing_manifest import build_writing_manifest, format_manifest_for_prompt
 from .utils import (
     STAGES,
@@ -41,16 +42,18 @@ class ResearchManager:
         runs_dir: Path,
         operator: ClaudeOperator,
         output_stream: TextIO = sys.stdout,
+        ui: TerminalUI | None = None,
     ) -> None:
         self.project_root = project_root
         self.runs_dir = runs_dir
         self.operator = operator
         self.prompt_dir = self.project_root / "src" / "prompts"
         self.output_stream = output_stream
+        self.ui = ui or TerminalUI(output_stream=output_stream)
 
     def run(self, user_goal: str, venue: str | None = None) -> bool:
         paths = self._create_run(user_goal, venue=venue)
-        self._print(f"Run created at: {paths.run_root}")
+        self.ui.show_run_started(paths.run_root.as_posix(), self.operator.model, venue or "default")
         return self._run_from_paths(paths)
 
     def resume_run(
@@ -74,10 +77,14 @@ class ResearchManager:
             + (f"\nRequested start stage: {start_stage.stage_title}" if start_stage else "")
             + f"\nVenue: {config['venue']}",
         )
-        self._print(f"Resuming run at: {paths.run_root}")
+        self.ui.show_run_started(
+            paths.run_root.as_posix(),
+            self.operator.model,
+            config["venue"],
+            resumed=True,
+        )
         if start_stage:
-            self._print(f"Restarting from: {start_stage.stage_title}")
-        self._print(f"Venue profile: {config['venue']}")
+            self.ui.show_status(f"Restarting from {start_stage.stage_title}", level="warn")
         return self._run_from_paths(paths, start_stage=start_stage)
 
     def _run_from_paths(self, paths: RunPaths, start_stage: StageSpec | None = None) -> bool:
@@ -91,11 +98,11 @@ class ResearchManager:
                     "run_aborted",
                     f"Run aborted during {stage.stage_title}.",
                 )
-                self._print("Run aborted.")
+                self.ui.show_status("Run aborted.", level="warn")
                 return False
 
         append_log_entry(paths.logs, "run_complete", "All stages approved.")
-        self._print("All stages approved. Run complete.")
+        self.ui.show_status("All stages approved. Run complete.", level="success")
         return True
 
     def _create_run(self, user_goal: str, venue: str | None = None) -> RunPaths:
@@ -137,7 +144,7 @@ class ResearchManager:
         continue_session = False
 
         while True:
-            self._print(f"\nRunning {stage.stage_title} (attempt {attempt_no})...")
+            self.ui.show_stage_start(stage.stage_title, attempt_no, continue_session)
             prompt = self._build_stage_prompt(paths, stage, revision_feedback, continue_session)
             append_log_entry(
                 paths.logs,
@@ -169,8 +176,9 @@ class ResearchManager:
             )
 
             if not result.stage_file_path.exists():
-                self._print(
-                    f"Stage summary draft missing for {stage.stage_title}. Running repair attempt..."
+                self.ui.show_status(
+                    f"Stage summary draft missing for {stage.stage_title}. Running repair attempt...",
+                    level="warn",
                 )
                 append_log_entry(
                     paths.logs,
@@ -214,8 +222,9 @@ class ResearchManager:
             stage_markdown = read_text(result.stage_file_path)
             validation_errors = validate_stage_markdown(stage_markdown) + validate_stage_artifacts(stage, paths)
             if validation_errors:
-                self._print(
-                    f"Stage summary for {stage.stage_title} was incomplete. Running repair attempt..."
+                self.ui.show_status(
+                    f"Stage summary for {stage.stage_title} was incomplete. Running repair attempt...",
+                    level="warn",
                 )
                 append_log_entry(
                     paths.logs,
@@ -260,8 +269,9 @@ class ResearchManager:
                 stage_markdown = read_text(repair_result.stage_file_path)
                 validation_errors = validate_stage_markdown(stage_markdown) + validate_stage_artifacts(stage, paths)
                 if validation_errors:
-                    self._print(
-                        f"Repair output for {stage.stage_title} is still incomplete. Normalizing locally..."
+                    self.ui.show_status(
+                        f"Repair output for {stage.stage_title} is still incomplete. Normalizing locally...",
+                        level="warn",
                     )
                     normalized_markdown = canonicalize_stage_markdown(
                         stage=stage,
@@ -322,8 +332,9 @@ class ResearchManager:
             )
             stage_markdown = read_text(final_stage_path)
 
+            suggestions = parse_refinement_suggestions(stage_markdown)
             self._display_stage_output(stage, stage_markdown)
-            choice = self._ask_choice()
+            choice = self._ask_choice(suggestions)
             append_log_entry(
                 paths.logs,
                 f"{stage.slug} attempt {attempt_no} user_choice",
@@ -331,7 +342,6 @@ class ResearchManager:
             )
 
             if choice in {"1", "2", "3"}:
-                suggestions = parse_refinement_suggestions(stage_markdown)
                 selected = suggestions[int(choice) - 1]
                 revision_feedback = (
                     "Continue the current stage conversation and improve the existing work. "
@@ -366,7 +376,7 @@ class ResearchManager:
                     f"{stage.slug} approved",
                     "Stage approved and appended to memory.",
                 )
-                self._print(f"Approved {stage.stage_title}.")
+                self.ui.show_status(f"Approved {stage.stage_title}.", level="success")
                 return True
 
             if choice == "6":
@@ -403,36 +413,13 @@ class ResearchManager:
         return build_prompt(stage, stage_template, user_request, approved_memory, revision_feedback)
 
     def _display_stage_output(self, stage: StageSpec, markdown: str) -> None:
-        divider = "=" * 80
-        self._print(f"\n{divider}")
-        self._print(stage.stage_title)
-        self._print(divider)
-        self._print(markdown.rstrip())
-        self._print(divider)
+        self.ui.show_stage_document(stage.stage_title, markdown)
 
-    def _ask_choice(self) -> str:
-        valid = {"1", "2", "3", "4", "5", "6"}
-        while True:
-            choice = input("Enter your choice:\n> ").strip()
-            if choice in valid:
-                return choice
-            self._print("Invalid choice. Enter one of: 1, 2, 3, 4, 5, 6.")
+    def _ask_choice(self, suggestions: list[str]) -> str:
+        return self.ui.choose_action(suggestions)
 
     def _read_multiline_feedback(self) -> str:
-        self._print("Enter custom feedback. Finish with an empty line:")
-        lines: list[str] = []
-
-        while True:
-            prompt = "> " if not lines else ""
-            line = input(prompt)
-            if not line.strip():
-                if lines:
-                    break
-                self._print("Feedback cannot be empty.")
-                continue
-            lines.append(line.rstrip())
-
-        return "\n".join(lines).strip()
+        return self.ui.read_multiline_feedback()
 
     def _materialize_missing_stage_draft(
         self,
@@ -464,11 +451,12 @@ class ResearchManager:
                 f"{truncate_text(normalized_markdown, max_chars=4000)}"
             ),
         )
-        self._print(
+        self.ui.show_status(
             f"{stage.stage_title} did not produce a stage summary file during {source}. "
-            "Generated a local fallback draft and continuing recovery..."
+            "Generated a local fallback draft and continuing recovery...",
+            level="warn",
         )
         return type("FallbackResult", (), {"stage_file_path": draft_path, "stdout": fallback_text, "stderr": ""})()
 
     def _print(self, text: str) -> None:
-        print(text, file=self.output_stream)
+        self.ui.write(text.rstrip() + "\n")
