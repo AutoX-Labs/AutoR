@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
-from .operator import ClaudeOperator
+from .operator_protocol import OperatorProtocol
 from .terminal_ui import TerminalUI
 from .writing_manifest import build_writing_manifest, format_manifest_for_prompt
 from .utils import (
@@ -30,10 +30,12 @@ from .utils import (
     load_prompt_template,
     mark_stage_execution_started,
     parse_refinement_suggestions,
+    read_attempt_count,
     read_text,
     truncate_text,
     validate_stage_artifacts,
     validate_stage_markdown,
+    write_attempt_count,
     write_text,
 )
 
@@ -43,7 +45,7 @@ class ResearchManager:
         self,
         project_root: Path,
         runs_dir: Path,
-        operator: ClaudeOperator,
+        operator: OperatorProtocol,
         output_stream: TextIO = sys.stdout,
         ui: TerminalUI | None = None,
     ) -> None:
@@ -149,7 +151,7 @@ class ResearchManager:
         return pending
 
     def _run_stage(self, paths: RunPaths, stage: StageSpec) -> bool:
-        attempt_no = 1
+        attempt_no = read_attempt_count(paths, stage) + 1
         revision_feedback: str | None = None
         continue_session = False
         mark_stage_execution_started(paths, stage)
@@ -170,6 +172,7 @@ class ResearchManager:
                 attempt_no,
                 continue_session=continue_session,
             )
+            write_attempt_count(paths, stage, attempt_no)
             append_log_entry(
                 paths.logs,
                 f"{stage.slug} attempt {attempt_no} result",

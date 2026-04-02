@@ -4,3 +4,4 @@ runs/
 .tmp/
 AGENTS.md
 .codex
+.planning/

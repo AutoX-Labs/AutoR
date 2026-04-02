@@ -49,6 +49,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--operator",
+        choices=["cli", "acp"],
+        default="cli",
+        help="Operator backend: 'cli' uses Claude CLI subprocess (default), 'acp' uses ACP JSON-RPC protocol.",
+    )
+    parser.add_argument(
         "--resume-run",
         help="Resume an existing run by run_id under runs/. Use 'latest' to resume the most recent run.",
     )
@@ -111,6 +117,18 @@ def read_user_goal() -> str:
     return goal
 
 
+def create_operator(args, model: str, ui: TerminalUI):
+    if args.operator == "acp":
+        from src.acp_operator import ACPOperator
+        from src.acp_server import ACPServer
+        import os
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        server = ACPServer(api_key=api_key)
+        return ACPOperator(model=model, ui=ui, server_factory=lambda: server)
+    return ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
+
+
 def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parent
@@ -126,7 +144,7 @@ def main() -> int:
         existing_model = existing_config.get("model")
         model = args.model or (existing_model if existing_model != "unknown" else None) or "sonnet"
         venue = resolve_venue_key(args.venue or existing_config["venue"])
-        operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
+        operator = create_operator(args, model, ui)
         manager = ResearchManager(
             project_root=repo_root,
             runs_dir=runs_dir,
@@ -137,7 +155,7 @@ def main() -> int:
 
     model = args.model or "sonnet"
     venue = resolve_venue_key(args.venue or DEFAULT_VENUE)
-    operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
+    operator = create_operator(args, model, ui)
     manager = ResearchManager(
         project_root=repo_root,
         runs_dir=runs_dir,
