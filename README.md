@@ -1,6 +1,4 @@
-<p align="center">
-  <strong>AutoR: Human-Centered AI Research Co-pilot</strong>
-</p>
+<h1 align="center">AutoR: Human-Centered AI Research Co-pilot</h1>
 
 <p align="center">
   A terminal-first, file-based research workflow runner for long-form AI-assisted research.
