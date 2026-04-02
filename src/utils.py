@@ -1154,3 +1154,17 @@ def relative_to_run(path: Path, run_root: Path) -> str:
         return str(path.resolve().relative_to(run_root.resolve()))
     except ValueError:
         return str(path.resolve())
+
+
+def read_attempt_count(paths: RunPaths, stage: StageSpec) -> int:
+    path = paths.operator_state_dir / f"{stage.slug}.attempt_count.txt"
+    if path.exists():
+        text = read_text(path).strip()
+        if text.isdigit():
+            return int(text)
+    return 0
+
+
+def write_attempt_count(paths: RunPaths, stage: StageSpec, count: int) -> None:
+    path = paths.operator_state_dir / f"{stage.slug}.attempt_count.txt"
+    write_text(path, str(count))

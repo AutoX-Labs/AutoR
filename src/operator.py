@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 from typing import TextIO
 
+from .operator_protocol import OperatorProtocol
 from .terminal_ui import TerminalUI
 from .utils import (
     DEFAULT_REFINEMENT_SUGGESTIONS,
@@ -25,7 +26,7 @@ from .utils import (
 )
 
 
-class ClaudeOperator:
+class ClaudeOperator(OperatorProtocol):
     def __init__(
         self,
         command: str = "claude",
@@ -370,6 +371,17 @@ Original stderr:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+            append_jsonl(
+                paths.logs_raw,
+                {
+                    "_meta": {
+                        "stage": stage.slug,
+                        "attempt": attempt_no,
+                        "mode": mode,
+                        "event": "keyboard_interrupt",
+                    }
+                },
+            )
             raise
         finally:
             process.stdout.close()
@@ -612,4 +624,7 @@ Original stderr:
 
     def _looks_like_resume_failure(self, stdout_text: str, stderr_text: str) -> bool:
         combined = "\n".join(part for part in [stdout_text, stderr_text] if part).lower()
-        return "no conversation found with session id" in combined or "resume" in combined and "not found" in combined
+        return (
+            "no conversation found with session id" in combined
+            or ("resume" in combined and "not found" in combined)
+        )
