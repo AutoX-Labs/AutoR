@@ -21,7 +21,7 @@ from .manifest import (
     update_manifest_run_status,
 )
 from .operator import ClaudeOperator
-from .platform.foundry import generate_paper_package
+from .platform.foundry import generate_paper_package, generate_release_package
 from .writing_manifest import build_writing_manifest, format_manifest_for_prompt
 from .utils import (
     STAGES,
@@ -447,6 +447,13 @@ class ResearchManager:
                     append_log_entry(
                         paths.logs,
                         f"{stage.slug} paper_package",
+                        package.summary,
+                    )
+                elif stage.slug == "08_dissemination":
+                    package = generate_release_package(paths.run_root)
+                    append_log_entry(
+                        paths.logs,
+                        f"{stage.slug} release_package",
                         package.summary,
                     )
                 write_stage_handoff(paths, stage, stage_markdown)
