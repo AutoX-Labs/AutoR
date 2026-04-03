@@ -1,4 +1,4 @@
-<h1 align="center">AutoR: Human-Centered AI Research Co-pilot</h1>
+<h1 align="center">AutoR: Accelerating the AI Research Loop with Human-in-the-Loop Co-pilot </h1>
 
 <p align="center">
   A terminal-first, file-based research workflow runner for long-form AI-assisted research.
