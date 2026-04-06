@@ -33,6 +33,7 @@ from .manifest import (
 )
 from .operator import ClaudeOperator
 from .platform.foundry import generate_paper_package, generate_release_package
+from .review_rebuttal import run_review_rebuttal_hook
 from .writing_manifest import build_writing_manifest, format_manifest_for_prompt
 from .utils import (
     INTAKE_STAGE,
@@ -83,6 +84,7 @@ class ResearchManager:
         self.output_stream = output_stream
         self.ui = ui or TerminalUI(output_stream=output_stream)
         self._redo_start_stage: StageSpec | None = None
+        self._review_rebuttal: bool = False
 
     def run(
         self,
@@ -90,7 +92,9 @@ class ResearchManager:
         venue: str | None = None,
         resources: list[ResourceEntry] | None = None,
         skip_intake: bool = False,
+        review_rebuttal: bool = False,
     ) -> bool:
+        self._review_rebuttal = review_rebuttal
         paths = self._create_run(user_goal, venue=venue, resources=resources)
         self.ui.show_run_started(paths.run_root.as_posix(), self.operator.model, venue or "default")
 
@@ -110,7 +114,9 @@ class ResearchManager:
         start_stage: StageSpec | None = None,
         rollback_stage: StageSpec | None = None,
         venue: str | None = None,
+        review_rebuttal: bool = False,
     ) -> bool:
+        self._review_rebuttal = review_rebuttal
         paths = build_run_paths(run_root)
         ensure_run_layout(paths)
         config = ensure_run_config(paths, model=self.operator.model, venue=venue)
@@ -632,6 +638,40 @@ class ResearchManager:
                         f"{stage.slug} paper_package",
                         package.summary,
                     )
+                    if self._review_rebuttal:
+                        self.ui.show_status("Running simulated peer review...", level="info")
+                        try:
+                            review_result = run_review_rebuttal_hook(paths, model=self.operator.model)
+                            if review_result:
+                                append_log_entry(
+                                    paths.logs,
+                                    f"{stage.slug} review_rebuttal",
+                                    (
+                                        f"Review-rebuttal completed: {review_result['num_reviews']} reviews, "
+                                        f"recommendation={review_result['recommendation']}, "
+                                        f"avg_score={review_result.get('average_overall', 'N/A')}/10"
+                                    ),
+                                )
+                                self.ui.show_status(
+                                    f"Peer review complete: {review_result['recommendation']} "
+                                    f"(avg {review_result.get('average_overall', '?')}/10). "
+                                    f"See workspace/reviews/ for details.",
+                                    level="success",
+                                )
+                            else:
+                                append_log_entry(
+                                    paths.logs,
+                                    f"{stage.slug} review_rebuttal",
+                                    "Review-rebuttal hook returned None.",
+                                )
+                                self.ui.show_status("Review-rebuttal did not produce output.", level="warn")
+                        except Exception as exc:
+                            append_log_entry(
+                                paths.logs,
+                                f"{stage.slug} review_rebuttal_error",
+                                f"Review-rebuttal failed: {exc}",
+                            )
+                            self.ui.show_status(f"Review-rebuttal failed: {exc}", level="warn")
                 elif stage.slug == "08_dissemination":
                     package = generate_release_package(paths.run_root)
                     append_log_entry(

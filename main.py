@@ -73,6 +73,12 @@ def parse_args() -> argparse.Namespace:
         "--rollback-stage",
         help="When resuming a run, roll back to this stage and mark downstream stages stale before continuing.",
     )
+    parser.add_argument(
+        "--review-rebuttal",
+        action="store_true",
+        help="After the writing stage, run simulated peer review (3 reviewers + meta-review) "
+             "and generate an author rebuttal. Artifacts are saved to workspace/reviews/.",
+    )
     return parser.parse_args()
 
 
@@ -171,7 +177,7 @@ def main() -> int:
             operator=operator,
             ui=ui,
         )
-        manager.resume_run(run_root, start_stage=start_stage or rollback_stage, venue=venue, rollback_stage=rollback_stage)
+        manager.resume_run(run_root, start_stage=start_stage or rollback_stage, venue=venue, rollback_stage=rollback_stage, review_rebuttal=args.review_rebuttal)
         return 0
 
     model = args.model or "sonnet"
@@ -199,6 +205,7 @@ def main() -> int:
         venue=venue,
         resources=resources or None,
         skip_intake=skip_intake,
+        review_rebuttal=args.review_rebuttal,
     ) else 1
 
 
