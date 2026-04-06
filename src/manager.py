@@ -31,7 +31,8 @@ from .manifest import (
     sync_stage_session_id,
     update_manifest_run_status,
 )
-from .operator import ClaudeOperator
+from .operator_base import OperatorBase
+from .terminal_ui import TerminalUI
 from .platform.foundry import generate_paper_package, generate_release_package
 from .writing_manifest import build_writing_manifest, format_manifest_for_prompt
 from .utils import (
@@ -72,7 +73,7 @@ class ResearchManager:
         self,
         project_root: Path,
         runs_dir: Path,
-        operator: ClaudeOperator,
+        operator: OperatorBase,
         output_stream: TextIO = sys.stdout,
         ui: TerminalUI | None = None,
     ) -> None:

@@ -69,6 +69,9 @@ class RunPaths:
     def stage_attempt_state_file(self, stage: StageSpec, attempt_no: int) -> Path:
         return self.operator_state_dir / f"{stage.slug}.attempt_{attempt_no:02d}.json"
 
+    def stage_execution_marker_file(self, stage: StageSpec) -> Path:
+        return self.operator_state_dir / f"{stage.slug}.started"
+
 
 @dataclass(frozen=True)
 class OperatorResult:

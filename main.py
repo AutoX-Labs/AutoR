@@ -6,7 +6,7 @@ from pathlib import Path
 
 from src.intake import ResourceEntry, classify_resource, collect_resource_paths_from_ui
 from src.manager import ResearchManager
-from src.operator import ClaudeOperator
+from src.operator_base import OperatorBase
 from src.terminal_ui import TerminalUI
 from src.utils import (
     DEFAULT_VENUE,
@@ -72,6 +72,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--rollback-stage",
         help="When resuming a run, roll back to this stage and mark downstream stages stale before continuing.",
+    )
+    parser.add_argument(
+        "--operator",
+        choices=["claude"],
+        default="claude",
+        help="Operator backend. Default: claude.",
     )
     return parser.parse_args()
 
@@ -146,6 +152,14 @@ def _build_resource_entries(paths: list[str]) -> list[ResourceEntry]:
     return entries
 
 
+def create_operator(backend: str, model: str, fake_mode: bool, ui: TerminalUI) -> OperatorBase:
+    """Create an operator instance for the given backend."""
+    if backend == "claude":
+        from src.operator import ClaudeOperator
+        return ClaudeOperator(model=model, fake_mode=fake_mode, ui=ui)
+    raise ValueError(f"Unknown operator backend: {backend}")
+
+
 def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parent
@@ -164,7 +178,7 @@ def main() -> int:
         existing_model = existing_config.get("model")
         model = args.model or (existing_model if existing_model != "unknown" else None) or "sonnet"
         venue = resolve_venue_key(args.venue or existing_config["venue"])
-        operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
+        operator = create_operator(args.operator, model=model, fake_mode=args.fake_operator, ui=ui)
         manager = ResearchManager(
             project_root=repo_root,
             runs_dir=runs_dir,
