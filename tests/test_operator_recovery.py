@@ -1,174 +1,115 @@
-"""Tests for operator recovery: resume failure detection, attempt persistence, interrupt logging."""
 from __future__ import annotations
 
+import io
 import json
 import tempfile
+import unittest
 from pathlib import Path
-
-import pytest
+from unittest.mock import patch
 
 from src.operator import ClaudeOperator
-from src.utils import (
-    STAGES,
-    build_run_paths,
-    ensure_run_layout,
-    read_attempt_count,
-    read_text,
-    write_attempt_count,
-    write_text,
-)
+from src.utils import STAGES, build_run_paths, ensure_run_layout, initialize_memory, write_text
 
 
-# ---------------------------------------------------------------------------
-# V3-3: _looks_like_resume_failure detection
-# ---------------------------------------------------------------------------
+class OperatorRecoveryTests(unittest.TestCase):
+    def test_resume_failure_falls_back_to_new_session_and_records_attempt_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_root = Path(tmp_dir) / "run"
+            paths = build_run_paths(run_root)
+            ensure_run_layout(paths)
+            write_text(paths.user_input, "Operator recovery goal")
+            initialize_memory(paths, "Operator recovery goal")
+
+            operator = ClaudeOperator(fake_mode=False, output_stream=io.StringIO())
+            stage = STAGES[0]
+            old_session_id = "old-session-id"
+            operator._persist_stage_session_id(paths, stage, old_session_id)
+
+            call_count = {"value": 0}
+
+            def fake_stream(*args, **kwargs):
+                call_count["value"] += 1
+                if call_count["value"] == 1:
+                    return (
+                        1,
+                        "No conversation found with session id old-session-id",
+                        "",
+                        None,
+                        {"raw_line_count": 1, "non_json_line_count": 1, "malformed_json_count": 1},
+                    )
+
+                stage_tmp_path = paths.stage_tmp_file(stage)
+                write_text(
+                    stage_tmp_path,
+                    (
+                        "# Stage 01: Literature Survey\n\n"
+                        "## Objective\nRecovered.\n\n"
+                        "## Previously Approved Stage Summaries\n_None yet._\n\n"
+                        "## What I Did\nRecovered session.\n\n"
+                        "## Key Results\nRecovered stage summary.\n\n"
+                        "## Files Produced\n- `stages/01_literature_survey.tmp.md`\n\n"
+                        "## Suggestions for Refinement\n"
+                        "1. Refine one.\n2. Refine two.\n3. Refine three.\n\n"
+                        "## Your Options\n"
+                        "1. Use suggestion 1\n2. Use suggestion 2\n3. Use suggestion 3\n4. Refine with your own feedback\n5. Approve and continue\n6. Abort\n"
+                    ),
+                )
+                return (
+                    0,
+                    "Recovered successfully.",
+                    "",
+                    "new-session-id",
+                    {"raw_line_count": 2, "non_json_line_count": 0, "malformed_json_count": 0},
+                )
+
+            with patch("src.operator.shutil.which", return_value="/usr/bin/claude"), patch.object(
+                operator,
+                "_run_streaming_command",
+                side_effect=fake_stream,
+            ):
+                result = operator._run_real(
+                    stage=stage,
+                    prompt="prompt",
+                    paths=paths,
+                    attempt_no=1,
+                    continue_session=True,
+                )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.session_id, "new-session-id")
+            self.assertEqual(call_count["value"], 2)
+            self.assertEqual(paths.stage_session_file(stage).read_text(encoding="utf-8").strip(), "new-session-id")
+
+            attempt_state = json.loads(paths.stage_attempt_state_file(stage, 1).read_text(encoding="utf-8"))
+            self.assertEqual(attempt_state["status"], "completed")
+            self.assertEqual(attempt_state["mode"], "resume")
+            self.assertEqual(attempt_state["session_id"], "new-session-id")
+
+    def test_broken_session_is_not_reused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_root = Path(tmp_dir) / "run"
+            paths = build_run_paths(run_root)
+            ensure_run_layout(paths)
+            write_text(paths.user_input, "Broken session test")
+            initialize_memory(paths, "Broken session test")
+
+            operator = ClaudeOperator(fake_mode=False, output_stream=io.StringIO())
+            stage = STAGES[0]
+            write_text(
+                paths.stage_session_state_file(stage),
+                json.dumps(
+                    {
+                        "session_id": "broken-session-id",
+                        "broken": True,
+                    },
+                    indent=2,
+                ),
+            )
+
+            resolved = operator._resolve_stage_session_id(paths, stage, continue_session=False)
+            self.assertIsNotNone(resolved)
+            self.assertNotEqual(resolved, "broken-session-id")
 
 
-class TestResumeFailureDetection:
-    def _op(self) -> ClaudeOperator:
-        return ClaudeOperator(fake_mode=True)
-
-    def test_exact_session_not_found_message(self):
-        op = self._op()
-        assert op._looks_like_resume_failure(
-            "Error: No conversation found with session id abc-123", ""
-        )
-
-    def test_case_insensitive(self):
-        op = self._op()
-        assert op._looks_like_resume_failure(
-            "ERROR: NO CONVERSATION FOUND WITH SESSION ID XYZ", ""
-        )
-
-    def test_resume_not_found_detected(self):
-        op = self._op()
-        assert op._looks_like_resume_failure(
-            "Could not resume: session not found", ""
-        )
-
-    def test_resume_and_not_found_in_stderr(self):
-        op = self._op()
-        assert op._looks_like_resume_failure(
-            "", "Failed to resume session — not found in backend"
-        )
-
-    def test_unrelated_resume_word_not_false_positive(self):
-        op = self._op()
-        # "resume" appears in normal research context, no "not found"
-        assert not op._looks_like_resume_failure(
-            "Please resume the experiment from checkpoint 5", ""
-        )
-
-    def test_not_found_without_resume_not_false_positive(self):
-        op = self._op()
-        # "not found" without "resume" should not trigger
-        assert not op._looks_like_resume_failure(
-            "File not found: data.csv", ""
-        )
-
-    def test_empty_output(self):
-        op = self._op()
-        assert not op._looks_like_resume_failure("", "")
-
-    def test_none_like_empty(self):
-        op = self._op()
-        # Both empty strings
-        assert not op._looks_like_resume_failure("", "")
-
-    def test_normal_success_output(self):
-        op = self._op()
-        assert not op._looks_like_resume_failure(
-            '{"type":"result","subtype":"success","session_id":"abc"}', ""
-        )
-
-
-# ---------------------------------------------------------------------------
-# V3-1: attempt_no persistence across resumes
-# ---------------------------------------------------------------------------
-
-
-class TestAttemptCountPersistence:
-    def test_initial_count_is_zero(self, tmp_path):
-        paths = build_run_paths(tmp_path / "run")
-        ensure_run_layout(paths)
-        stage = STAGES[0]
-        assert read_attempt_count(paths, stage) == 0
-
-    def test_write_then_read(self, tmp_path):
-        paths = build_run_paths(tmp_path / "run")
-        ensure_run_layout(paths)
-        stage = STAGES[0]
-        write_attempt_count(paths, stage, 3)
-        assert read_attempt_count(paths, stage) == 3
-
-    def test_increments_across_writes(self, tmp_path):
-        paths = build_run_paths(tmp_path / "run")
-        ensure_run_layout(paths)
-        stage = STAGES[0]
-
-        for i in range(1, 6):
-            write_attempt_count(paths, stage, i)
-
-        assert read_attempt_count(paths, stage) == 5
-
-    def test_different_stages_independent(self, tmp_path):
-        paths = build_run_paths(tmp_path / "run")
-        ensure_run_layout(paths)
-        write_attempt_count(paths, STAGES[0], 3)
-        write_attempt_count(paths, STAGES[1], 7)
-        assert read_attempt_count(paths, STAGES[0]) == 3
-        assert read_attempt_count(paths, STAGES[1]) == 7
-
-    def test_corrupt_file_returns_zero(self, tmp_path):
-        paths = build_run_paths(tmp_path / "run")
-        ensure_run_layout(paths)
-        stage = STAGES[0]
-        path = paths.operator_state_dir / f"{stage.slug}.attempt_count.txt"
-        write_text(path, "not_a_number")
-        assert read_attempt_count(paths, stage) == 0
-
-    def test_empty_file_returns_zero(self, tmp_path):
-        paths = build_run_paths(tmp_path / "run")
-        ensure_run_layout(paths)
-        stage = STAGES[0]
-        path = paths.operator_state_dir / f"{stage.slug}.attempt_count.txt"
-        path.write_text("", encoding="utf-8")
-        assert read_attempt_count(paths, stage) == 0
-
-    def test_manager_reads_persisted_count(self, tmp_path):
-        """Verify that manager._run_stage starts from persisted count + 1."""
-        paths = build_run_paths(tmp_path / "run")
-        ensure_run_layout(paths)
-        stage = STAGES[0]
-
-        # Pre-set as if 3 attempts already happened
-        write_attempt_count(paths, stage, 3)
-        write_text(paths.user_input, "test goal")
-        write_text(
-            paths.memory,
-            "# Approved Run Memory\n\n## Original User Goal\ntest\n\n"
-            "## Approved Stage Summaries\n\n_None yet._\n",
-        )
-
-        # After setting count=3, next attempt_no should be 4
-        assert read_attempt_count(paths, stage) + 1 == 4
-
-    def test_write_attempt_count_called_by_manager(self, tmp_path):
-        """After fake-operator run_stage + write_attempt_count, count persists."""
-        paths = build_run_paths(tmp_path / "run")
-        ensure_run_layout(paths)
-        stage = STAGES[0]
-
-        # Simulate what manager does: read, increment, run, write
-        attempt_no = read_attempt_count(paths, stage) + 1
-        assert attempt_no == 1
-
-        write_attempt_count(paths, stage, attempt_no)
-        assert read_attempt_count(paths, stage) == 1
-
-        # Simulate second resume
-        attempt_no = read_attempt_count(paths, stage) + 1
-        assert attempt_no == 2
-
-        write_attempt_count(paths, stage, attempt_no)
-        assert read_attempt_count(paths, stage) == 2
+if __name__ == "__main__":
+    unittest.main()

@@ -172,6 +172,75 @@ class TerminalUI:
             lines.append(line.rstrip())
         return "\n".join(lines).strip()
 
+    # ------------------------------------------------------------------
+    # Intake session helpers
+    # ------------------------------------------------------------------
+
+    def read_single_line(self, prompt: str) -> str:
+        """Read a single line of input with a styled prompt."""
+        return self._read_line(self._style(prompt, self.BOLD, self.FG_CYAN))
+
+    def ask_yes_no(self, question: str, default: bool = True) -> bool:
+        """Ask a yes/no question. Returns *default* on empty input."""
+        hint = "[Y/n]" if default else "[y/N]"
+        answer = self._read_line(
+            self._style(f"  {question} {hint} ", self.BOLD, self.FG_CYAN)
+        ).strip().lower()
+        if not answer:
+            return default
+        return answer in {"y", "yes"}
+
+    def ask_resource_paths(self) -> list[tuple[str, str]]:
+        """Collect file/directory paths and descriptions interactively.
+
+        Returns list of ``(path, description)`` tuples.
+        The user enters an empty path to stop.
+        """
+        self.panel(
+            "Add Resources",
+            [
+                "Enter file or directory paths one at a time.",
+                "For each path, you can add a short description.",
+                "Press Enter on an empty path to finish.",
+            ],
+            color=self.FG_MAGENTA,
+        )
+        entries: list[tuple[str, str]] = []
+        idx = 1
+        while True:
+            path = self._read_line(
+                self._style(f"  Path {idx} (empty to finish): ", self.BOLD, self.FG_MAGENTA)
+            ).strip()
+            if not path:
+                break
+            desc = self._read_line(
+                self._style("  Description (optional): ", self.DIM, self.FG_WHITE)
+            ).strip()
+            entries.append((path, desc))
+            idx += 1
+        return entries
+
+    def show_intake_summary(self, context: object) -> None:
+        """Display a summary panel for an IntakeContext."""
+        # Import here to avoid circular imports
+        from .intake import IntakeContext
+        assert isinstance(context, IntakeContext)
+
+        body: list[str] = [f"Goal: {context.goal}"]
+        if context.resources:
+            body.append(f"Resources: {len(context.resources)} file(s)")
+            for r in context.resources:
+                label = f"  - [{r.resource_type}] {r.source_path}"
+                if r.description:
+                    label += f" ({r.description})"
+                body.append(label)
+        if context.qa_transcript:
+            body.append("")
+            for turn in context.qa_transcript:
+                body.append(f"Q: {turn.question}")
+                body.append(f"A: {turn.answer}")
+        self.panel("Intake Summary", body, color=self.FG_GREEN)
+
     def panel(self, title: str, body: list[str] | str, color: str = "") -> None:
         lines = self._panel_lines(title, body, color=color)
         self.write("\n".join(lines) + "\n")

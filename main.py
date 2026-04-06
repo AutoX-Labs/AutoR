@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from src.intake import ResourceEntry, classify_resource, collect_resource_paths_from_ui
 from src.manager import ResearchManager
 from src.operator import ClaudeOperator
 from src.terminal_ui import TerminalUI
@@ -49,18 +50,28 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--operator",
-        choices=["cli", "acp"],
-        default="cli",
-        help="Operator backend: 'cli' uses Claude CLI subprocess (default), 'acp' uses ACP JSON-RPC protocol.",
-    )
-    parser.add_argument(
         "--resume-run",
         help="Resume an existing run by run_id under runs/. Use 'latest' to resume the most recent run.",
     )
     parser.add_argument(
         "--redo-stage",
         help="When resuming a run, restart from this stage slug or stage number (for example '06_analysis' or '6').",
+    )
+    parser.add_argument(
+        "--resources",
+        nargs="+",
+        metavar="PATH",
+        help="Paths to resource files or directories to include in the run "
+             "(PDFs, code repos, datasets, .bib files, notes).",
+    )
+    parser.add_argument(
+        "--skip-intake",
+        action="store_true",
+        help="Skip the Claude-driven Socratic intake stage.",
+    )
+    parser.add_argument(
+        "--rollback-stage",
+        help="When resuming a run, roll back to this stage and mark downstream stages stale before continuing.",
     )
     return parser.parse_args()
 
@@ -117,16 +128,22 @@ def read_user_goal() -> str:
     return goal
 
 
-def create_operator(args, model: str, ui: TerminalUI):
-    if args.operator == "acp":
-        from src.acp_operator import ACPOperator
-        from src.acp_server import ACPServer
-        import os
-
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        server = ACPServer(api_key=api_key)
-        return ACPOperator(model=model, ui=ui, server_factory=lambda: server)
-    return ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
+def _build_resource_entries(paths: list[str]) -> list[ResourceEntry]:
+    """Classify CLI --resources into ResourceEntry objects."""
+    entries: list[ResourceEntry] = []
+    for p in paths:
+        path = Path(p).expanduser().resolve()
+        rtype, ddir = classify_resource(path)
+        entries.append(
+            ResourceEntry(
+                source_path=str(path),
+                resource_type=rtype,
+                dest_dir=ddir,
+                dest_relative="",
+                description="",
+            )
+        )
+    return entries
 
 
 def main() -> int:
@@ -138,32 +155,51 @@ def main() -> int:
 
     if args.resume_run:
         start_stage = resolve_stage(args.redo_stage)
+        rollback_stage = resolve_stage(args.rollback_stage)
+        if start_stage is not None and rollback_stage is not None:
+            raise ValueError("--redo-stage and --rollback-stage are mutually exclusive.")
         run_root = resolve_resume_run(runs_dir, args.resume_run)
         paths = build_run_paths(run_root)
         existing_config = load_run_config(paths)
         existing_model = existing_config.get("model")
         model = args.model or (existing_model if existing_model != "unknown" else None) or "sonnet"
         venue = resolve_venue_key(args.venue or existing_config["venue"])
-        operator = create_operator(args, model, ui)
+        operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
         manager = ResearchManager(
             project_root=repo_root,
             runs_dir=runs_dir,
             operator=operator,
             ui=ui,
         )
-        return 0 if manager.resume_run(run_root, start_stage=start_stage, venue=venue) else 1
+        manager.resume_run(run_root, start_stage=start_stage or rollback_stage, venue=venue, rollback_stage=rollback_stage)
+        return 0
 
     model = args.model or "sonnet"
     venue = resolve_venue_key(args.venue or DEFAULT_VENUE)
-    operator = create_operator(args, model, ui)
+    operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
     manager = ResearchManager(
         project_root=repo_root,
         runs_dir=runs_dir,
         operator=operator,
         ui=ui,
     )
+
     goal = args.goal.strip() if args.goal else read_user_goal()
-    return 0 if manager.run(goal, venue=venue) else 1
+    skip_intake = args.skip_intake or not sys.stdin.isatty()
+
+    # Collect resources: from --resources flag, and optionally from interactive prompt
+    resources: list[ResourceEntry] = []
+    if args.resources:
+        resources = _build_resource_entries(args.resources)
+    if not skip_intake and sys.stdin.isatty():
+        resources = collect_resource_paths_from_ui(ui, initial_resources=args.resources)
+
+    return 0 if manager.run(
+        goal,
+        venue=venue,
+        resources=resources or None,
+        skip_intake=skip_intake,
+    ) else 1
 
 
 if __name__ == "__main__":
