@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
+from .operator_base import OperatorBase
 from .terminal_ui import TerminalUI
 from .utils import (
     DEFAULT_REFINEMENT_SUGGESTIONS,
@@ -26,7 +27,7 @@ from .utils import (
 )
 
 
-class ClaudeOperator:
+class ClaudeOperator(OperatorBase):
     def __init__(
         self,
         command: str = "claude",
@@ -36,10 +37,14 @@ class ClaudeOperator:
         ui: TerminalUI | None = None,
     ) -> None:
         self.command = command
-        self.model = model
+        self._model = model
         self.fake_mode = fake_mode
         self.output_stream = output_stream
         self.ui = ui or TerminalUI(output_stream=output_stream)
+
+    @property
+    def model(self) -> str:
+        return self._model
 
     def run_stage(
         self,
