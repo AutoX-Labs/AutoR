@@ -5,6 +5,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -34,12 +36,14 @@ class ClaudeOperator:
         fake_mode: bool = False,
         output_stream: TextIO = sys.stdout,
         ui: TerminalUI | None = None,
+        stage_timeout: int = 14400,
     ) -> None:
         self.command = command
         self.model = model
         self.fake_mode = fake_mode
         self.output_stream = output_stream
         self.ui = ui or TerminalUI(output_stream=output_stream)
+        self.stage_timeout = stage_timeout
 
     def run_stage(
         self,
@@ -416,9 +420,29 @@ Original stderr:
         ended_with_newline = True
         observed_session_id: str | None = None
         malformed_json_count = 0
+        timed_out = threading.Event()
+        start_time = time.monotonic()
+
+        def _on_timeout() -> None:
+            timed_out.set()
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+        timer = threading.Timer(self.stage_timeout, _on_timeout)
+        timer.daemon = True
+        timer.start()
 
         try:
             for raw_line in process.stdout:
+                if timed_out.is_set():
+                    break
+
+                self.output_stream.write(raw_line)
+                self.output_stream.flush()
+
                 ended_with_newline = raw_line.endswith("\n")
                 line = raw_line.rstrip("\n")
                 raw_lines.append(line)
@@ -451,15 +475,51 @@ Original stderr:
                 extracted_fragments.extend(extract_stream_text_fragments(payload))
                 self.ui.show_stream_event(payload, tool_names)
         except KeyboardInterrupt:
+            elapsed = time.monotonic() - start_time
             process.terminate()
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+            append_jsonl(
+                paths.logs_raw,
+                {
+                    "_meta": {
+                        "stage": stage.slug,
+                        "attempt": attempt_no,
+                        "mode": mode,
+                        "event": "keyboard_interrupt",
+                        "elapsed_seconds": round(elapsed, 1),
+                    }
+                },
+            )
             raise
         finally:
+            timer.cancel()
             process.stdout.close()
+
+        if timed_out.is_set():
+            elapsed = time.monotonic() - start_time
+            append_jsonl(
+                paths.logs_raw,
+                {
+                    "_meta": {
+                        "stage": stage.slug,
+                        "attempt": attempt_no,
+                        "mode": mode,
+                        "event": "stage_timeout",
+                        "timeout_seconds": self.stage_timeout,
+                        "elapsed_seconds": round(elapsed, 1),
+                    }
+                },
+            )
+            stdout_text = self._compose_stdout_text(
+                extracted_fragments=extracted_fragments,
+                non_json_lines=non_json_lines,
+                raw_lines=raw_lines,
+            )
+            return -1, stdout_text, "Stage timed out", observed_session_id
 
         exit_code = process.wait()
         if raw_lines and not ended_with_newline:
@@ -721,7 +781,10 @@ Original stderr:
 
     def _looks_like_resume_failure(self, stdout_text: str, stderr_text: str) -> bool:
         combined = "\n".join(part for part in [stdout_text, stderr_text] if part).lower()
-        return "no conversation found with session id" in combined or "resume" in combined and "not found" in combined
+        return (
+            "no conversation found with session id" in combined
+            or ("resume" in combined and "not found" in combined)
+        )
 
     def _write_attempt_state(
         self,

@@ -79,6 +79,18 @@ def parse_args() -> argparse.Namespace:
         help="After the writing stage, run simulated peer review (3 reviewers + meta-review) "
              "and generate an author rebuttal. Artifacts are saved to workspace/reviews/.",
     )
+    parser.add_argument(
+        "--project-root",
+        metavar="PATH",
+        help="Path to an existing project repository. AutoR will scan it to infer "
+             "current project state and recommend a re-entry stage.",
+    )
+    parser.add_argument(
+        "--stage-timeout",
+        type=int,
+        default=14400,
+        help="Maximum seconds per stage attempt before timeout. Defaults to 14400 (4 hours).",
+    )
     return parser.parse_args()
 
 
@@ -170,19 +182,18 @@ def main() -> int:
         existing_model = existing_config.get("model")
         model = args.model or (existing_model if existing_model != "unknown" else None) or "sonnet"
         venue = resolve_venue_key(args.venue or existing_config["venue"])
-        operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
+        operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui, stage_timeout=args.stage_timeout)
         manager = ResearchManager(
             project_root=repo_root,
             runs_dir=runs_dir,
             operator=operator,
             ui=ui,
         )
-        manager.resume_run(run_root, start_stage=start_stage or rollback_stage, venue=venue, rollback_stage=rollback_stage, review_rebuttal=args.review_rebuttal)
-        return 0
+        return 0 if manager.resume_run(run_root, start_stage=start_stage or rollback_stage, venue=venue, rollback_stage=rollback_stage, review_rebuttal=args.review_rebuttal) else 1
 
     model = args.model or "sonnet"
     venue = resolve_venue_key(args.venue or DEFAULT_VENUE)
-    operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
+    operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui, stage_timeout=args.stage_timeout)
     manager = ResearchManager(
         project_root=repo_root,
         runs_dir=runs_dir,
@@ -200,12 +211,15 @@ def main() -> int:
     if not skip_intake and sys.stdin.isatty():
         resources = collect_resource_paths_from_ui(ui, initial_resources=args.resources)
 
+    project_root_arg = Path(args.project_root).expanduser().resolve() if args.project_root else None
+
     return 0 if manager.run(
         goal,
         venue=venue,
         resources=resources or None,
         skip_intake=skip_intake,
         review_rebuttal=args.review_rebuttal,
+        project_root=project_root_arg,
     ) else 1
 
 

@@ -52,6 +52,7 @@ class RunPaths:
     artifacts_dir: Path
     notes_dir: Path
     reviews_dir: Path
+    bootstrap_dir: Path
     intake_context: Path
 
     def stage_file(self, stage: StageSpec) -> Path:
@@ -179,6 +180,7 @@ def build_run_paths(run_root: Path) -> RunPaths:
         artifacts_dir=workspace_root / "artifacts",
         notes_dir=workspace_root / "notes",
         reviews_dir=workspace_root / "reviews",
+        bootstrap_dir=workspace_root / "bootstrap",
         intake_context=run_root / "intake_context.json",
     )
 
@@ -210,6 +212,7 @@ def workspace_dirs(paths: RunPaths) -> list[Path]:
         paths.artifacts_dir,
         paths.notes_dir,
         paths.reviews_dir,
+        paths.bootstrap_dir,
     ]
 
 
@@ -364,6 +367,7 @@ def format_stage_template(template: str, stage: StageSpec, paths: RunPaths) -> s
         "{{WORKSPACE_ARTIFACTS_DIR}}": str(paths.artifacts_dir.resolve()),
         "{{WORKSPACE_NOTES_DIR}}": str(paths.notes_dir.resolve()),
         "{{WORKSPACE_REVIEWS_DIR}}": str(paths.reviews_dir.resolve()),
+        "{{WORKSPACE_BOOTSTRAP_DIR}}": str(paths.bootstrap_dir.resolve()),
         "{{SELECTED_VENUE}}": selected_venue_key(paths),
     }
 
@@ -990,6 +994,20 @@ def _has_recent_files_with_suffixes(directory: Path, suffixes: set[str], cutoff_
 
 def _count_non_markdown_files(directory: Path) -> int:
     return sum(1 for path in _existing_files(directory) if path.suffix.lower() not in {".md", ".txt"})
+
+
+def read_attempt_count(paths: RunPaths, stage: StageSpec) -> int:
+    path = paths.operator_state_dir / f"{stage.slug}.attempt_count.txt"
+    if path.exists():
+        text = read_text(path).strip()
+        if text.isdigit():
+            return int(text)
+    return 0
+
+
+def write_attempt_count(paths: RunPaths, stage: StageSpec, count: int) -> None:
+    path = paths.operator_state_dir / f"{stage.slug}.attempt_count.txt"
+    write_text(path, str(count))
 
 
 def _load_template_registry() -> dict[str, dict[str, str]]:
