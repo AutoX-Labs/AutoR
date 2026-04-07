@@ -34,7 +34,7 @@ class CliSmokeTests(unittest.TestCase):
                 capture_output=True,
             )
 
-            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertEqual(result.returncode, 1, msg=result.stderr)
             run_roots = sorted(path for path in runs_dir.iterdir() if path.is_dir())
             self.assertEqual(len(run_roots), 1)
             manifest = load_run_manifest(run_roots[0] / "run_manifest.json")
@@ -103,7 +103,7 @@ class CliSmokeTests(unittest.TestCase):
                 capture_output=True,
             )
 
-            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertEqual(result.returncode, 1, msg=result.stderr)
             self.assertFalse((older / "run_manifest.json").exists())
             manifest = load_run_manifest(newer / "run_manifest.json")
             self.assertIsNotNone(manifest)

@@ -69,6 +69,9 @@ class RunPaths:
     def stage_attempt_state_file(self, stage: StageSpec, attempt_no: int) -> Path:
         return self.operator_state_dir / f"{stage.slug}.attempt_{attempt_no:02d}.json"
 
+    def stage_execution_marker_file(self, stage: StageSpec) -> Path:
+        return self.operator_state_dir / f"{stage.slug}.started_at.txt"
+
 
 @dataclass(frozen=True)
 class OperatorResult:
@@ -397,8 +400,8 @@ def build_prompt(
     stage_template: str,
     user_request: str,
     approved_memory: str,
-    handoff_context: str,
-    revision_feedback: str | None,
+    handoff_context: str = "",
+    revision_feedback: str | None = None,
     intake_context_text: str | None = None,
 ) -> str:
     sections = [

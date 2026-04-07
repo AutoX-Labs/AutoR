@@ -11,6 +11,7 @@ from src.manager import ResearchManager
 from src.manifest import load_run_manifest
 from src.utils import (
     DEFAULT_REFINEMENT_SUGGESTIONS,
+    INTAKE_STAGE,
     STAGES,
     OperatorResult,
     approved_stage_summaries,
@@ -299,7 +300,7 @@ class ManagerSmokeTests(unittest.TestCase):
             self.assertIsNotNone(manifest)
             assert manifest is not None
             self.assertEqual(manifest.run_status, "cancelled")
-            self.assertEqual(manifest.current_stage_slug, STAGE_01.slug)
+            self.assertEqual(manifest.current_stage_slug, INTAKE_STAGE.slug)
             self.assertIsNone(manifest.completed_at)
 
 
