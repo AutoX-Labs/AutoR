@@ -9,7 +9,6 @@ from __future__ import annotations
 from .operator_base import OperatorBase
 from .utils import OperatorResult, RunPaths, StageSpec
 
-
 class CodexOperator(OperatorBase):
     """Operator backed by the Codex CLI (placeholder).
 
