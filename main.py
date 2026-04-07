@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--operator",
-        choices=["claude", "codex"],
+        choices=["claude"],
         default="claude",
         help="Operator backend. Default: claude.",
     )
@@ -157,9 +157,6 @@ def create_operator(backend: str, model: str, fake_mode: bool, ui: TerminalUI) -
     if backend == "claude":
         from src.operator import ClaudeOperator
         return ClaudeOperator(model=model, fake_mode=fake_mode, ui=ui)
-    if backend == "codex":
-        from src.operator_codex import CodexOperator
-        return CodexOperator(model=model)
     raise ValueError(f"Unknown operator backend: {backend}")
 
 
