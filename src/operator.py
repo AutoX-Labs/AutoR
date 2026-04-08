@@ -421,6 +421,7 @@ Original stderr:
         ended_with_newline = True
         observed_session_id: str | None = None
         malformed_json_count = 0
+        tool_names: dict[str, str] = {}
 
         try:
             for raw_line in process.stdout:

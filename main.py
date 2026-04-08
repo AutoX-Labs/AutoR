@@ -190,7 +190,7 @@ def main() -> int:
 
     model = args.model or "sonnet"
     venue = resolve_venue_key(args.venue or DEFAULT_VENUE)
-    operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
+    operator = create_operator(args.operator, model=model, fake_mode=args.fake_operator, ui=ui)
     manager = ResearchManager(
         project_root=repo_root,
         runs_dir=runs_dir,
