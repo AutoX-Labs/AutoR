@@ -8,6 +8,7 @@ Run or define credible experiments that test the approved hypotheses using the i
 
 ## Your Responsibilities
 
+- Your experiments should verify or refute the Empirical Hypotheses (H1, H2...) from Stage 02. Track which hypothesis each experiment addresses.
 - Execute the most important experiments that the current implementation and environment support.
 - If full execution is blocked, state exactly what blocked it and what partial evidence was still produced.
 - Organize outputs so the analysis stage can reason from actual evidence.

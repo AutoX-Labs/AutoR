@@ -39,11 +39,26 @@ Additional expectations for this stage:
 
 - `Objective` should describe the specific hypothesis-generation goal.
 - `What I Did` should explain how the hypotheses were derived from prior work and identified gaps.
-- `Key Results` should include:
-  - primary hypothesis or top hypotheses
-  - why they matter
-  - what evidence patterns would support or refute them
-  - key risks, assumptions, or confounders
+- `Key Results` must be organized into three explicit subsections:
+
+  ### Theoretical Propositions
+  Theory-grounded claims derived from literature or reasoning that are not directly testable in this study. Each entry should include:
+  - **Statement**: the proposition itself
+  - **Derived from**: which literature finding or reasoning supports it
+
+  ### Empirical Hypotheses
+  Specific, falsifiable predictions that require experimental evidence. Each entry should include:
+  - **Statement**: the hypothesis itself
+  - **Depends on**: what assumption or prior result it relies on
+  - **Verification**: what experiment or evidence would confirm or refute it
+
+  ### Paper Claims (Provisional)
+  Narrative-level claims intended for the paper framing, subject to revision after experiments. Each entry should include:
+  - **Statement**: the provisional claim
+  - **Status**: proposed (may change to supported/weakened/dropped after experimentation)
+
+  Use identifiers (T1, T2... for propositions, H1, H2... for hypotheses, C1, C2... for claims) so downstream stages can reference them.
+
 - `Files Produced` should list any hypothesis artifacts created.
 - `Suggestions for Refinement` should suggest ways to narrow, sharpen, or de-risk the hypotheses.
 

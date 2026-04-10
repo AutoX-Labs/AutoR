@@ -70,6 +70,7 @@ from .utils import (
     append_log_entry,
     build_decision_ledger_context,
     build_handoff_context,
+    build_hypothesis_context,
     build_continuation_prompt,
     build_prompt,
     build_run_paths,
@@ -1356,6 +1357,20 @@ class ResearchManager:
                 "The following decisions, assumptions, and open questions were recorded in earlier stages. "
                 "Respect locked decisions and accepted assumptions. Address open questions when relevant.\n\n"
                 + ledger_context
+                + "\n"
+            )
+
+        # Inject typed hypothesis context from Stage 02
+        hypothesis_context = build_hypothesis_context(paths)
+        if hypothesis_context and stage.number >= 3:
+            stage_template = (
+                stage_template.rstrip()
+                + "\n\n# Hypothesis Context (from Stage 02)\n\n"
+                "The following claims were classified in Stage 02. Use them as follows:\n"
+                "- **Theoretical Propositions**: accepted premises, do not design experiments to test these\n"
+                "- **Empirical Hypotheses**: these MUST be tested in experimentation stages\n"
+                "- **Paper Claims (Provisional)**: narrative framing only, do not treat as verified\n\n"
+                + hypothesis_context
                 + "\n"
             )
 

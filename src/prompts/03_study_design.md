@@ -8,6 +8,7 @@ Convert the approved hypotheses into a concrete study or experimental design tha
 
 ## Your Responsibilities
 
+- Design experiments to test the Empirical Hypotheses (H1, H2...) from Stage 02. Do not design experiments for Theoretical Propositions — those are accepted premises.
 - Define the study objective clearly.
 - Translate the hypothesis into measurable research questions or evaluation targets.
 - Propose datasets, baselines, variables, interventions, controls, and outcome measures as appropriate.

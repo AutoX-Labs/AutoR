@@ -1033,6 +1033,60 @@ def build_handoff_context(paths: RunPaths, upto_stage: StageSpec | None = None, 
     return "\n\n".join(parts).strip() or "No stage handoff summaries available yet."
 
 
+def extract_hypothesis_context(stage_markdown: str) -> str | None:
+    """Extract typed hypothesis subsections from Stage 02 Key Results."""
+    key_results = extract_markdown_section(stage_markdown, "Key Results")
+    if not key_results:
+        return None
+
+    subsection_pattern = re.compile(
+        r"^### (Theoretical Propositions|Empirical Hypotheses|Paper Claims \(Provisional\))\s*$\n?(.*?)(?=^### |\Z)",
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    matches = list(subsection_pattern.finditer(key_results))
+    if not matches:
+        return None
+
+    parts: list[str] = []
+    for match in matches:
+        heading = match.group(1)
+        body = match.group(2).strip()
+        if body:
+            parts.append(f"### {heading}\n{body}")
+
+    return "\n\n".join(parts) if parts else None
+
+
+def build_hypothesis_context(paths: RunPaths) -> str | None:
+    """Build hypothesis context from Stage 02 handoff for injection into downstream prompts."""
+    stage_02_handoff = paths.handoff_dir / "02_hypothesis_generation.md"
+    if not stage_02_handoff.exists():
+        return None
+
+    content = read_text(stage_02_handoff)
+    # Extract Key Results from handoff, then look for subsections
+    key_results = extract_markdown_section(content, "Key Results")
+    if not key_results:
+        return None
+
+    subsection_pattern = re.compile(
+        r"^### (Theoretical Propositions|Empirical Hypotheses|Paper Claims \(Provisional\))\s*$\n?(.*?)(?=^### |\Z)",
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    matches = list(subsection_pattern.finditer(key_results))
+    if not matches:
+        return None
+
+    parts: list[str] = []
+    for match in matches:
+        heading = match.group(1)
+        body = match.group(2).strip()
+        if body:
+            parts.append(f"### {heading}\n{body}")
+
+    return "\n\n".join(parts) if parts else None
+
+
 def build_decision_ledger_context(paths: RunPaths, upto_stage: StageSpec | None = None) -> str | None:
     """Collect Decision Ledger sections from all approved handoff files."""
     handoffs = sorted(path for path in paths.handoff_dir.glob("*.md") if path.is_file())
