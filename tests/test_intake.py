@@ -14,6 +14,7 @@ from src.intake import (
     format_intake_for_prompt,
     ingest_resources,
     load_intake_context,
+    parse_intake_clarification_question,
     save_intake_context,
 )
 from src.utils import (
@@ -213,6 +214,23 @@ class FormatIntakeForPromptTests(unittest.TestCase):
         ctx = IntakeContext(goal="X", original_goal="X")
         text = format_intake_for_prompt(ctx)
         self.assertEqual(text, "")
+
+
+class ClarificationQuestionTests(unittest.TestCase):
+    def test_parses_lettered_options(self) -> None:
+        parsed = parse_intake_clarification_question(
+            "Question: Which target venue should guide the paper? Options: A) NeurIPS-style conference B) Journal-style article C) No preference"
+        )
+        self.assertEqual(parsed.question, "Which target venue should guide the paper?")
+        self.assertEqual(
+            parsed.options,
+            ["NeurIPS-style conference", "Journal-style article", "No preference"],
+        )
+
+    def test_plain_question_without_options_is_allowed(self) -> None:
+        parsed = parse_intake_clarification_question("Which dataset constraints matter most?")
+        self.assertEqual(parsed.question, "Which dataset constraints matter most?")
+        self.assertEqual(parsed.options, [])
 
 
 class BuildIntakeHelpersTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -34,6 +35,13 @@ class QATurn:
 
 
 @dataclass(frozen=True)
+class ClarificationQuestion:
+    question: str
+    options: list[str] = field(default_factory=list)
+    raw_text: str = ""
+
+
+@dataclass(frozen=True)
 class ResourceEntry:
     source_path: str
     resource_type: str  # "pdf", "bib", "code", "dataset", "notes", "other"
@@ -49,6 +57,44 @@ class IntakeContext:
     resources: list[ResourceEntry] = field(default_factory=list)
     qa_transcript: list[QATurn] = field(default_factory=list)
     notes: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Clarification parsing
+# ---------------------------------------------------------------------------
+
+
+_OPTION_MARKER_RE = re.compile(
+    r"(?:^|[\s;,\-])(?:Option\s*)?\(?([A-Da-d]|[1-4])[\).:]\s+"
+)
+
+
+def parse_intake_clarification_question(text: str) -> ClarificationQuestion:
+    """Parse a Stage 0 refinement item as a user-facing clarification question.
+
+    The model is prompted to write each intake item as a question with short
+    answer options, but we keep this parser tolerant so legacy summaries still
+    degrade to a plain custom-answer question.
+    """
+    raw_text = " ".join(text.split()).strip()
+    if not raw_text:
+        return ClarificationQuestion(question="", options=[], raw_text="")
+
+    matches = list(_OPTION_MARKER_RE.finditer(raw_text))
+    options: list[str] = []
+    question = raw_text
+
+    if len(matches) >= 2:
+        question = raw_text[: matches[0].start()].strip(" :-;")
+        question = re.sub(r"\b(?:Options?|Choices?)\s*:?\s*$", "", question, flags=re.IGNORECASE).strip(" :-;")
+        for index, match in enumerate(matches):
+            next_start = matches[index + 1].start() if index + 1 < len(matches) else len(raw_text)
+            option = raw_text[match.end():next_start].strip(" -;,.")
+            if option:
+                options.append(option)
+
+    question = re.sub(r"^(?:Question|Clarification)\s*:\s*", "", question, flags=re.IGNORECASE).strip()
+    return ClarificationQuestion(question=question or raw_text, options=options, raw_text=raw_text)
 
 
 # ---------------------------------------------------------------------------

@@ -49,20 +49,15 @@ class CodexOperator(ClaudeOperator):
             "-C",
             str(workspace_alias),
             "exec",
+            "--json",
+            "--sandbox",
+            "workspace-write",
+            "--skip-git-repo-check",
         ]
-        if resume:
-            command.append("resume")
-        command.extend(
-            [
-                "--json",
-                "--full-auto",
-                "--skip-git-repo-check",
-            ]
-        )
         if self.model and self.model != "default":
             command.extend(["-m", self.model])
         if resume:
-            command.append(session_id)
+            command.extend(["resume", session_id])
         command.append("-")
         return command, Path(tempfile.gettempdir()), stdin_text
 

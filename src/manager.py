@@ -29,11 +29,13 @@ from .project_bootstrap import (
 )
 from .intake import (
     IntakeContext,
+    QATurn,
     ResourceEntry,
     format_intake_for_prompt,
     format_resources_for_intake_prompt,
     ingest_resources,
     load_intake_context,
+    parse_intake_clarification_question,
     save_intake_context
 )
 from .artifact_index import format_artifact_index_for_prompt, write_artifact_index
@@ -89,6 +91,7 @@ from .utils import (
     mark_stage_execution_started,
     extract_revision_delta,
     strip_revision_delta,
+    strip_markdown_section,
     parse_refinement_suggestions,
     read_attempt_count,
     read_text,
@@ -341,9 +344,10 @@ class ResearchManager:
     def _run_intake(self, paths: RunPaths) -> bool:
         """Run the Claude-driven intake stage.
 
-        Uses the same operator + approval loop pattern as ``_run_stage``
-        so that Claude generates Socratic questions and the user refines
-        via the standard suggestion / custom-feedback / approve mechanism.
+        Uses the same operator execution pattern as ``_run_stage`` but keeps
+        the first manual review pass intake-specific: the three refinement
+        items are treated as user clarification questions, not stage
+        improvement suggestions.
 
         On approval the intake summary is saved to ``intake_context.json``
         and appended to run memory so all downstream stages can see it.
@@ -359,6 +363,7 @@ class ResearchManager:
         attempt_no = 1
         revision_feedback: str | None = None
         continue_session = False
+        intake_qa_turns: list[QATurn] = []
         mark_stage_execution_started(paths, stage)
 
         while True:
@@ -420,15 +425,36 @@ class ResearchManager:
             stage_markdown = strip_revision_delta(stage_markdown)
             write_text(result.stage_file_path, stage_markdown)
 
-            # Show output and let user choose (same approval loop as _run_stage)
             suggestions = parse_refinement_suggestions(stage_markdown)
-            choice, auto_feedback = self._collect_review_decision(
-                paths=paths,
-                stage=stage,
-                attempt_no=attempt_no,
-                stage_markdown=stage_markdown,
-                suggestions=suggestions,
-            )
+
+            if self.reviewer is None and attempt_no == 1:
+                clarification_feedback, turns = self._collect_intake_clarifications(
+                    paths=paths,
+                    stage=stage,
+                    attempt_no=attempt_no,
+                    suggestions=suggestions,
+                )
+                intake_qa_turns.extend(turns)
+                revision_feedback = clarification_feedback
+                continue_session = True
+                attempt_no += 1
+                continue
+
+            if self.reviewer is None:
+                choice, auto_feedback = self._collect_intake_final_decision(
+                    paths=paths,
+                    stage=stage,
+                    attempt_no=attempt_no,
+                    stage_markdown=stage_markdown,
+                )
+            else:
+                choice, auto_feedback = self._collect_review_decision(
+                    paths=paths,
+                    stage=stage,
+                    attempt_no=attempt_no,
+                    stage_markdown=stage_markdown,
+                    suggestions=suggestions,
+                )
 
             if choice in {"1", "2", "3"}:
                 selected = suggestions[int(choice) - 1]
@@ -463,23 +489,109 @@ class ResearchManager:
                     f"{stage.slug} attempt {attempt_no} promoted",
                     f"Promoted intake summary.\ndraft: {result.stage_file_path}\nfinal: {final_path}",
                 )
-                self._save_intake_from_approved_stage(paths, stage_markdown)
+                self._save_intake_from_approved_stage(paths, stage_markdown, intake_qa_turns)
                 self.ui.show_status(f"Approved {stage.stage_title}.", level="success")
                 return True
 
             if choice == "6":
                 return False
 
-    def _save_intake_from_approved_stage(self, paths: RunPaths, stage_markdown: str) -> None:
+    def _collect_intake_clarifications(
+        self,
+        *,
+        paths: RunPaths,
+        stage: StageSpec,
+        attempt_no: int,
+        suggestions: list[str],
+    ) -> tuple[str, list[QATurn]]:
+        self.ui.show_status(
+            (
+                "Stage 0 produced an initial intake brief. Answer the clarification questions "
+                "one by one; the revised brief will be shown next."
+            ),
+            level="info",
+        )
+        turns: list[QATurn] = []
+        feedback_lines = [
+            "Continue the intake conversation and update the intake brief using the user's clarifications.",
+            "Do not ask these same Stage 0 intake questions again in the next review.",
+            "Produce a revised intake brief that is ready for user approval unless a new issue is truly blocking.",
+            "",
+            "User clarifications:",
+        ]
+
+        for index, suggestion in enumerate(suggestions, start=1):
+            parsed = parse_intake_clarification_question(suggestion)
+            answer = self.ui.choose_intake_clarification_answer(
+                question=parsed.question,
+                options=parsed.options,
+                index=index,
+                total=len(suggestions),
+            )
+            if answer is None:
+                answer_text = "Skipped as non-critical."
+            else:
+                answer_text = answer
+            turns.append(QATurn(question=parsed.question, answer=answer_text))
+            feedback_lines.extend([f"- Q: {parsed.question}", f"  A: {answer_text}"])
+
+        extra_feedback = self.ui.read_optional_multiline_feedback(
+            title="Additional Intake Guidance",
+            instructions=(
+                "Optionally add any extra requirement, constraint, resource note, or correction. "
+                "Press Enter immediately to skip."
+            ),
+        )
+        if extra_feedback:
+            turns.append(QATurn(question="Additional intake guidance", answer=extra_feedback))
+            feedback_lines.extend(["", "Additional user guidance:", extra_feedback])
+
+        feedback = "\n".join(feedback_lines).strip()
+        append_log_entry(
+            paths.logs,
+            f"{stage.slug} attempt {attempt_no} clarification_answers",
+            feedback,
+        )
+        return feedback, turns
+
+    def _collect_intake_final_decision(
+        self,
+        *,
+        paths: RunPaths,
+        stage: StageSpec,
+        attempt_no: int,
+        stage_markdown: str,
+    ) -> tuple[str, str | None]:
+        review_markdown = strip_markdown_section(
+            strip_markdown_section(stage_markdown, "Suggestions for Refinement"),
+            "Your Options",
+        )
+        self.ui.panel(
+            f"{stage.stage_title} | Intake Brief",
+            review_markdown.rstrip().splitlines(),
+            color=self.ui.FG_BLUE,
+        )
+        choice = self.ui.choose_intake_final_action()
+        append_log_entry(paths.logs, f"{stage.slug} attempt {attempt_no} user_choice", f"choice: {choice}")
+        return choice, None
+
+    def _save_intake_from_approved_stage(
+        self,
+        paths: RunPaths,
+        stage_markdown: str,
+        qa_transcript: list[QATurn] | None = None,
+    ) -> None:
         """Persist the approved intake stage output into intake_context.json and memory."""
         existing_ctx = load_intake_context(paths)
         goal = read_text(paths.user_input).strip()
+        existing_turns = existing_ctx.qa_transcript if existing_ctx else []
 
         # Merge: keep any pre-ingested resources, store the stage output as notes
         ctx = IntakeContext(
             goal=goal,
             original_goal=existing_ctx.original_goal if existing_ctx else goal,
             resources=existing_ctx.resources if existing_ctx else [],
+            qa_transcript=[*existing_turns, *(qa_transcript or [])],
             notes=stage_markdown,
         )
         save_intake_context(paths, ctx)

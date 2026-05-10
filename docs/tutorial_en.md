@@ -51,6 +51,15 @@ The current execution backends are:
 
 AutoR is the higher-level research loop. It is not trying to replace the underlying coding agent.
 
+### 2.1 Recent Updates You Should Know
+
+Several recent mainline changes matter for real use:
+
+- `00_intake` now has a dedicated clarification flow. The first intake pass asks questions one by one; each question can be answered with a model-proposed option, a custom answer, or skip. The revised pass then shows a compact intake brief instead of treating those questions as normal suggestions.
+- The terminal UI is better suited for real runs and recordings: panel body rows keep colored borders, long lines, long paths, and wide characters wrap inside the frame, and Stage 0 plus approval menus support keyboard navigation.
+- The Codex backend now uses the current Codex CLI `--sandbox workspace-write` execution flag, so it should not emit the deprecated Codex CLI `--full-auto` warning. This is separate from AutoR's own `--full-auto` approval mode.
+- AutoR's `--full-auto` still means automated approval: a strict reviewer agent replaces the waiting human gate, while the 9-stage research workflow itself stays unchanged.
+
 ---
 
 ## 3. What You Need Before Installation
@@ -611,6 +620,20 @@ The typical pipeline is:
 7. `07_writing`
 8. `08_dissemination`
 
+In practice, that is **1 intake stage + 8 formal research stages = 9 stages**.
+
+| Stage | What it does | What you should check |
+| --- | --- | --- |
+| `00_intake` | Aligns the goal, resources, constraints, evaluation direction, and target writing style before formal research begins. | Answer the clarification questions, add hard constraints, and confirm the problem is narrow enough to execute. |
+| `01_literature_survey` | Organizes related work, task background, benchmarks, baselines, and the real research gap. | Do not accept shallow paper lists; look for structured literature files, comparisons, and evidence ledgers. |
+| `02_hypothesis_generation` | Converts the direction into testable hypotheses and provisional paper claims. | Make sure it converges to a falsifiable main line instead of continuing to brainstorm. |
+| `03_study_design` | Turns the hypothesis into an executable experimental design. | Check datasets, metrics, baselines, ablations, budgets, seeds, failure criteria, and data artifacts. |
+| `04_implementation` | Builds real code, configs, data-prep scripts, and sanity checks. | Do not approve skeletons; require runnable scripts, commands, configs, and logs. |
+| `05_experimentation` | Runs the planned experiments and writes machine-readable results. | Distinguish smoke tests from real experiments; require baselines, repeats, result files, and failure records. |
+| `06_analysis` | Interprets results, creates figures, analyzes failures, and explains mechanisms. | Do not accept metric narration only; require plots, failure cases, ablation interpretation, and boundaries. |
+| `07_writing` | Produces venue-aware paper sources, BibTeX, a compiled PDF, and citation checks. | Verify that every major claim is backed by experiments, figures, or literature. |
+| `08_dissemination` | Builds review, release, readiness, reproduction, and presentation materials. | Confirm the run can be inspected, reproduced, and shown to others, not just read as a paper. |
+
 The shape of every stage is similar:
 
 1. AutoR builds the stage prompt
@@ -619,7 +642,7 @@ The shape of every stage is similar:
 4. the stage ends with a structured stage summary
 5. you decide whether to refine or approve
 
-The approval menu always has 6 actions:
+From `01_literature_survey` through `08_dissemination`, the approval menu has 6 actions:
 
 1. use suggestion 1
 2. use suggestion 2
@@ -627,6 +650,13 @@ The approval menu always has 6 actions:
 4. refine with your own feedback
 5. approve and continue
 6. abort
+
+`00_intake` is special:
+
+- the first pass does not ask you to use suggestion 1/2/3; it treats the three items as clarification questions and asks them one by one
+- each question supports model-proposed options, a custom answer, or skip
+- after the questions, you can still add extra custom guidance
+- the second pass regenerates the intake brief and only asks you to refine, approve, or abort
 
 The two most important actions in real use are:
 

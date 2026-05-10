@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import ExitStack
 import io
 import json
 import tempfile
@@ -8,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from src.approval_agent import ReviewDecision
+from src.intake import load_intake_context
 from src.manager import ResearchManager
 from src.manifest import load_run_manifest
 from src.project_bootstrap import StageAssessment
@@ -516,11 +518,18 @@ class ManagerSmokeTests(unittest.TestCase):
         )
         return runs_dir, operator, manager
 
+    def _auto_approve_intake(self, manager: ResearchManager, final_choice: str = "5") -> ExitStack:
+        stack = ExitStack()
+        stack.enter_context(patch.object(manager.ui, "choose_intake_clarification_answer", return_value=None))
+        stack.enter_context(patch.object(manager.ui, "read_optional_multiline_feedback", return_value=None))
+        stack.enter_context(patch.object(manager.ui, "choose_intake_final_action", return_value=final_choice))
+        return stack
+
     def test_manager_run_completes_full_eight_stage_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             runs_dir, operator, manager = self._build_manager(tmp_dir)
 
-            with patch.object(manager, "_ask_choice", return_value="5"):
+            with self._auto_approve_intake(manager), patch.object(manager, "_ask_choice", return_value="5"):
                 success = manager.run("Smoke-test the end-to-end AutoR flow.", venue="neurips_2025")
 
             self.assertTrue(success)
@@ -531,11 +540,45 @@ class ManagerSmokeTests(unittest.TestCase):
             self.assertTrue((paths.artifacts_dir / "release_package" / "artifact_bundle_manifest.json").exists())
             self.assertTrue(paths.stage_file(STAGE_06).exists())
 
+    def test_intake_first_pass_collects_clarifications_then_final_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            _, operator, manager = self._build_manager(tmp_dir)
+            paths = manager._create_run("Smoke-test intake clarification handling.", venue="neurips_2025")
+
+            with (
+                patch.object(
+                    manager.ui,
+                    "choose_intake_clarification_answer",
+                    side_effect=["Focus on empirical evaluation.", None, "Target a conference paper."],
+                ) as ask_question,
+                patch.object(
+                    manager.ui,
+                    "read_optional_multiline_feedback",
+                    return_value="Keep the first experiment lightweight.",
+                ),
+                patch.object(manager.ui, "choose_intake_final_action", return_value="5") as final_action,
+            ):
+                approved = manager._run_intake(paths)
+
+            self.assertTrue(approved)
+            self.assertEqual(ask_question.call_count, 3)
+            self.assertEqual(final_action.call_count, 1)
+            self.assertEqual(operator.continue_modes[INTAKE_STAGE.slug], [False, True])
+            self.assertIn("Focus on empirical evaluation.", operator.prompts[INTAKE_STAGE.slug][1])
+            self.assertIn("Keep the first experiment lightweight.", operator.prompts[INTAKE_STAGE.slug][1])
+            ctx = load_intake_context(paths)
+            self.assertIsNotNone(ctx)
+            assert ctx is not None
+            answers = [turn.answer for turn in ctx.qa_transcript]
+            self.assertIn("Focus on empirical evaluation.", answers)
+            self.assertIn("Skipped as non-critical.", answers)
+            self.assertIn("Keep the first experiment lightweight.", answers)
+
     def test_resume_run_from_redo_stage_reruns_downstream_stages(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             runs_dir, operator, manager = self._build_manager(tmp_dir)
 
-            with patch.object(manager, "_ask_choice", return_value="5"):
+            with self._auto_approve_intake(manager), patch.object(manager, "_ask_choice", return_value="5"):
                 self.assertTrue(manager.run("Smoke-test redo-stage handling.", venue="neurips_2025"))
 
             run_root = self._run_roots(runs_dir)[0]
@@ -686,7 +729,7 @@ class ManagerSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             runs_dir, operator, manager = self._build_manager(tmp_dir)
 
-            with patch.object(manager, "_ask_choice", return_value="5"):
+            with self._auto_approve_intake(manager), patch.object(manager, "_ask_choice", return_value="5"):
                 self.assertTrue(manager.run("Smoke-test rollback resume handling.", venue="neurips_2025"))
 
             run_root = self._run_roots(runs_dir)[0]
@@ -708,7 +751,7 @@ class ManagerSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             runs_dir, _, manager = self._build_manager(tmp_dir)
 
-            with patch.object(manager, "_ask_choice", return_value="6"):
+            with self._auto_approve_intake(manager, final_choice="6"), patch.object(manager, "_ask_choice", return_value="6"):
                 success = manager.run("Smoke-test abort handling.", venue="neurips_2025")
 
             self.assertFalse(success)
@@ -730,7 +773,7 @@ class ManagerSmokeTests(unittest.TestCase):
                 (project_root / name).write_text("# existing project code\n", encoding="utf-8")
             (project_root / "requirements.txt").write_text("torch\n", encoding="utf-8")
 
-            with patch.object(manager, "_ask_choice", return_value="5"):
+            with self._auto_approve_intake(manager), patch.object(manager, "_ask_choice", return_value="5"):
                 success = manager.run(
                     "Adopt an existing project into AutoR.",
                     venue="neurips_2025",
@@ -781,7 +824,7 @@ class ManagerSmokeTests(unittest.TestCase):
                 (project_root / name).write_text("# existing project code\n", encoding="utf-8")
             (project_root / "requirements.txt").write_text("torch\n", encoding="utf-8")
 
-            with patch.object(manager, "_ask_choice", return_value="5"):
+            with self._auto_approve_intake(manager), patch.object(manager, "_ask_choice", return_value="5"):
                 success = manager.run(
                     "Adopt an existing project with a bootstrap correction.",
                     venue="neurips_2025",
@@ -820,7 +863,7 @@ class ManagerSmokeTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch.object(manager, "_ask_choice", return_value="5"):
+            with self._auto_approve_intake(manager), patch.object(manager, "_ask_choice", return_value="5"):
                 success = manager.run(
                     "Use my prior papers to align the new project.",
                     venue="neurips_2025",

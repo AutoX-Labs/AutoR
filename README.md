@@ -72,7 +72,7 @@ AutoR takes a different position: research is too important to hand over as a bl
 | Execution model | A coding agent as the execution layer, AutoR as the research control loop |
 | Control model | Human approval by default, with an optional strict reviewer-agent gate for unattended runs |
 | Research unit | A reproducible run under `runs/<run_id>/` |
-| Workflow shape | Optional intake plus a fixed 8-stage pipeline |
+| Workflow shape | 9-stage workflow: optional intake plus eight formal research stages |
 | Quality bar | Artifact-backed outputs, not markdown-only summaries |
 | Recovery | Resume, redo-stage, rollback-stage, stage-local continuation |
 
@@ -124,6 +124,7 @@ It is:
 
 Latest mainline updates:
 
+- **2026-05-10**: Refined the terminal-first run experience. Stage 00 now uses a dedicated clarification flow: the first intake pass asks the user questions one by one with selectable options, custom answers, and skip; the revised intake brief then uses a compact refine / approve / abort menu instead of showing the normal suggestion template. The terminal UI also keeps colored frames on wrapped body rows, handles long lines and wide characters more reliably, and the Codex backend now uses the current `--sandbox workspace-write` execution flag instead of the deprecated Codex CLI `--full-auto` flag.
 - **2026-04-20**: Added an optional `--full-auto` approval mode. The execution loop is unchanged, but the manual approval gate can now be replaced by a strict simulated reviewer agent backed by Claude or Codex, with reviewer settings persisted in `run_config.json`.
 - **2026-04-19**: Merged **AutoR Studio** into main: a local browser workspace for the same run-based workflow, with live stage monitoring, human review, restart-safe recovery, paper preview, version history, and a Notebook view. The browser UI shares the same run directories and artifact model as the terminal workflow and is currently Claude-backed.
 - **2026-04-18**: Fixed a stage-summary recovery bug so local normalization now restores the required `Decision Ledger` section and validates draft outputs against the correct `.tmp.md` path. Added stage recovery controls that let operators `/skip` the current stage, `/back <stage>` to an earlier stage, or choose skip / roll back directly after retry exhaustion.
@@ -154,7 +155,7 @@ Highlighted outcomes from that run:
 
 ### 🖥️ Terminal Experience
 
-AutoR is designed for terminal-first execution, but the interaction layer is not limited to raw logs and plain prompts. The current UI supports banner-style startup, colored stage panels, parsed Claude event streams, wrapped markdown summaries, and a menu-driven approval loop suitable for demos and recordings.
+AutoR is designed for terminal-first execution, but the interaction layer is not limited to raw logs and plain prompts. The current UI supports banner-style startup, colored stage panels, parsed backend event streams, display-width-aware markdown wrapping, keyboard-selectable menus, and a Stage 00 clarification flow suitable for demos and recordings.
 
 <p align="center">
   <img src="assets/terminal.png" alt="AutoR terminal UI" width="92%" />
@@ -314,7 +315,7 @@ python studio.py --runs-dir /path/to/runs       # override runs directory
 What you can do in the Studio:
 
 - **Create a project** from the hub — fill in the title + thesis, click **Create Project**, and a real Claude-backed run starts immediately
-- **Watch stages run live** on the Overview page — horizontal 8-pill stage strip, pulsing current stage, live session trace streaming real Claude tool calls from `logs_raw.jsonl`
+- **Watch stages run live** on the Overview page — stage strip, pulsing current stage, live session trace streaming real Claude tool calls from `logs_raw.jsonl`
 - **Review & Approve** — the Review page shows a "You are reviewing" hero card with a TL;DR extracted from the stage markdown, a Files Produced pill list, and an `✅ Approve → Advance to <next stage>` button
 - **Send Feedback & Re-run** — feedback is woven into the **first attempt's prompt** of the next run (not wasted on an intermediate Claude call). Works on `human_review` AND `failed` stages
 - **Resume across restarts** — if you stop the server and come back, clicking Approve/Feedback lazy-resumes the existing on-disk run without re-running stages that already have a draft
@@ -325,10 +326,9 @@ The Studio requires the **Claude CLI** (`claude` on `PATH`) since every run is a
 
 ## ⚙️ How It Works
 
-AutoR uses an optional intake step followed by a fixed 8-stage pipeline:
+AutoR uses a 9-stage research workflow: one optional intake stage plus eight formal research stages.
 
 0. `00_intake` (optional)
-
 1. `01_literature_survey`
 2. `02_hypothesis_generation`
 3. `03_study_design`
@@ -337,6 +337,20 @@ AutoR uses an optional intake step followed by a fixed 8-stage pipeline:
 6. `06_analysis`
 7. `07_writing`
 8. `08_dissemination`
+
+### The 9 Stages
+
+| Stage | Role | What the human should check |
+| --- | --- | --- |
+| `00_intake` | Align the research goal, resources, constraints, target venue, and success criteria before formal work begins. | Answer the clarification questions, add missing constraints, and make sure the project is narrow enough to execute. |
+| `01_literature_survey` | Build the related-work base, collect evidence, organize papers, and identify the real gap. | Reject shallow paper lists; require task framing, benchmarks, baselines, differences, and structured literature files. |
+| `02_hypothesis_generation` | Convert the broad direction into testable hypotheses and provisional paper claims. | Push for one main claim plus measurable secondary hypotheses instead of an unfocused idea list. |
+| `03_study_design` | Turn the hypothesis into an executable experimental plan. | Check datasets, metrics, baselines, ablations, budgets, failure criteria, and machine-readable data artifacts. |
+| `04_implementation` | Build the runnable code, configs, data preparation, and sanity checks. | Do not approve skeletons; require executable scripts, reproducible commands, and logs or checks showing the path runs. |
+| `05_experimentation` | Run the planned experiments and write machine-readable results. | Distinguish smoke tests from real experiments; require baselines, repeats, result files, and failure records. |
+| `06_analysis` | Interpret the results, create figures, analyze failures, and refine the evidence story. | Require real plots, ablations, error analysis, and explanations rather than metric narration. |
+| `07_writing` | Produce venue-aware manuscript sources, bibliography, compiled PDF, and writing checks. | Verify that every major claim is backed by artifacts, experiments, or citations. |
+| `08_dissemination` | Package the run for review, release, reproduction, or external presentation. | Confirm that readiness notes, review materials, manifests, and outward-facing deliverables exist. |
 
 ```mermaid
 flowchart TD
@@ -394,7 +408,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     A[Build prompt from template + goal + memory + optional feedback] --> B[Start or resume stage session]
-    B --> C[Claude writes draft stage summary]
+    B --> C[Backend agent writes draft stage summary]
     C --> D[Validate markdown and required artifacts]
     D --> E{Valid?}
     E -- No --> F[Repair, normalize, or rerun current stage]
@@ -412,10 +426,8 @@ flowchart TD
 
 ### Approval semantics
 
-- `1 / 2 / 3`: continue the same stage conversation using one of the AI's refinement suggestions
-- `4`: continue the same stage conversation with custom user feedback
-- `5`: approve and continue to the next stage
-- `6`: abort the run
+- Stage 00 has a dedicated manual intake flow. On the first pass, AutoR asks the clarification questions one by one with selectable options, custom answers, and skip. On the revised pass, the user sees a compact intake brief and chooses refine, approve, or abort.
+- Stages 01-08 use the standard six-action review menu: `1 / 2 / 3` continue with an AI refinement suggestion, `4` continues with custom feedback, `5` approves, and `6` aborts.
 
 The stage loop is controlled by AutoR, not by Claude.
 
@@ -628,9 +640,9 @@ Other run state:
 - `run_manifest.json`: machine-readable run and stage lifecycle state.
 - `artifact_index.json`: machine-readable index over `workspace/data`, `workspace/results`, and `workspace/figures`.
 - `prompt_cache/`: exact prompts used for stage attempts and repairs.
-- `operator_state/`: per-stage Claude session IDs.
+- `operator_state/`: per-stage backend session IDs.
 - `stages/`: draft and promoted stage summaries.
-- `logs.txt` and `logs_raw.jsonl`: workflow logs and raw Claude stream output.
+- `logs.txt` and `logs_raw.jsonl`: workflow logs and raw backend stream output.
 
 ## ✅ Validation
 
@@ -673,12 +685,13 @@ A run with only markdown notes does not pass validation.
 ### Included in the current mainline
 
 - optional intake stage and resource ingestion
-- fixed 8-stage workflow
+- 9-stage workflow: optional intake plus eight formal research stages
 - mandatory human approval after every stage
-- Claude Code as the execution layer
-- stage-local continuation within the same Claude session
+- Claude Code or Codex as the execution layer
+- Stage 00 clarification Q&A plus a compact intake approval flow
+- stage-local continuation within the same backend session
 - prompt caching via `@file`
-- live streaming terminal output
+- live streaming terminal output with keyboard-selectable menus
 - repair passes and local fallback normalization
 - run manifest, rollback, and stale tracking
 - artifact index and experiment manifest

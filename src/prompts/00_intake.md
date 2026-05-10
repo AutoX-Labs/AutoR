@@ -43,4 +43,5 @@ Additional expectations for this stage:
   - An inventory of user-provided resources with brief descriptions of each.
   - An assessment of which pipeline stages (01-08) are well-supported by existing resources and which need full execution.
   - Any critical ambiguities or decisions the user should resolve before proceeding.
-- **Suggestions for Refinement**: Frame these as Socratic questions or actionable clarifications the user might want to address. For example: clarify scope, specify target venue, confirm baseline methods, or provide additional resources.
+- **Suggestions for Refinement**: For the first intake pass, these are not ordinary improvement suggestions. Write exactly three user-facing clarification questions that help align the research direction. Each item should be one concise question and, when useful, include 2-4 short answer options in this style: `Question: ... Options: A) ... B) ... C) ...`. Good topics include scope, target venue, baseline methods, available resources, experimental constraints, and success criteria.
+- If the prompt already contains user clarification answers from a previous intake pass, do not repeat those same questions. Use the revised intake brief to incorporate the answers and only list optional refinements or genuinely blocking new decisions.

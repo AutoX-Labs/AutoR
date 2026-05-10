@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
-import textwrap
+import unicodedata
 from typing import Any, TextIO
 
 
@@ -133,39 +134,13 @@ class TerminalUI:
             "6. Abort",
         ]
 
-        if not self._interactive_input_available():
-            while True:
-                self.panel("Choose Next Action", options, color=self.FG_MAGENTA)
-                choice = self._read_line("Enter your choice:\n> ").strip()
-                if choice in {"1", "2", "3", "4", "5", "6"}:
-                    return choice
-                self.show_status("Invalid choice. Enter one of: 1, 2, 3, 4, 5, 6.", level="warn")
-
-        selected = 0
-        previous_line_count = 0
-        self._write("\x1b[?25l")
-        try:
-            while True:
-                lines = self._menu_lines("Choose Next Action", options, selected)
-                previous_line_count = self._replace_live_block(lines, previous_line_count)
-                key = self._read_key()
-
-                if key in {"up", "k"}:
-                    selected = (selected - 1) % len(options)
-                elif key in {"down", "j"}:
-                    selected = (selected + 1) % len(options)
-                elif key in {"1", "2", "3", "4", "5", "6"}:
-                    selected = int(key) - 1
-                elif key == "enter":
-                    self._clear_live_block(previous_line_count)
-                    self.panel(
-                        "Selected Action",
-                        [options[selected]],
-                        color=self.FG_GREEN if selected == 4 else self.FG_MAGENTA,
-                    )
-                    return str(selected + 1)
-        finally:
-            self._write("\x1b[?25h")
+        selected = self._choose_menu_index("Choose Next Action", options)
+        self.panel(
+            "Selected Action",
+            [options[selected]],
+            color=self.FG_GREEN if selected == 4 else self.FG_MAGENTA,
+        )
+        return str(selected + 1)
 
     def read_multiline_feedback(self) -> str:
         self.panel(
@@ -187,6 +162,110 @@ class TerminalUI:
                 continue
             lines.append(line.rstrip())
         return "\n".join(lines).strip()
+
+    def choose_intake_clarification_answer(
+        self,
+        question: str,
+        options: list[str],
+        index: int,
+        total: int,
+    ) -> str | None:
+        menu = [f"{number}. {option}" for number, option in enumerate(options, start=1)]
+        custom_number = len(menu) + 1
+        skip_number = len(menu) + 2
+        menu.append(f"{custom_number}. Custom response")
+        menu.append(f"{skip_number}. Skip this question")
+
+        if self._interactive_input_available():
+            selected = self._choose_menu_index(
+                f"Intake Clarification {index}/{total}",
+                [question, "", *menu],
+                selectable_start=2,
+                clear_on_select=False,
+            )
+            action_index = selected - 2
+            if action_index < len(options):
+                return options[action_index]
+            if action_index == len(options):
+                return self._read_required_single_line(
+                    "Custom response",
+                    context=[f"Question: {question}", "", "Available options:", *options],
+                )
+            return None
+
+        body = [question, "", *menu]
+        while True:
+            self.panel(f"Intake Clarification {index}/{total}", body, color=self.FG_MAGENTA)
+            choice = self._read_line(
+                self._style(
+                    "Enter your choice or type a custom response:\n> ",
+                    self.BOLD,
+                    self.FG_MAGENTA,
+                )
+            ).strip()
+            if not choice:
+                self.show_status("Please choose an option, type a response, or skip.", level="warn")
+                continue
+            if choice.isdigit():
+                selected = int(choice)
+                if 1 <= selected <= len(options):
+                    return options[selected - 1]
+                if selected == custom_number:
+                    return self._read_required_single_line(
+                        "Custom response",
+                        context=[f"Question: {question}", "", "Available options:", *options],
+                    )
+                if selected == skip_number:
+                    return None
+                self.show_status(f"Invalid choice. Enter 1-{skip_number}.", level="warn")
+                continue
+            return choice
+
+    def choose_intake_final_action(self) -> str:
+        options = [
+            "1. Refine with your own feedback",
+            "2. Approve intake and continue",
+            "3. Abort",
+        ]
+        if self._interactive_input_available():
+            selected = self._choose_menu_index("Review Intake Brief", options)
+            return ["4", "5", "6"][selected]
+
+        mapping = {"1": "4", "2": "5", "3": "6", "4": "4", "5": "5", "6": "6"}
+        while True:
+            self.panel("Review Intake Brief", options, color=self.FG_MAGENTA)
+            choice = self._read_line(self._style("Enter your choice:\n> ", self.BOLD, self.FG_MAGENTA)).strip()
+            if choice in mapping:
+                return mapping[choice]
+            self.show_status("Invalid choice. Enter 1, 2, or 3.", level="warn")
+
+    def read_optional_multiline_feedback(
+        self,
+        title: str = "Additional Guidance",
+        instructions: str = (
+            "Optionally enter extra guidance and finish with an empty line. "
+            "Press Enter immediately to skip."
+        ),
+    ) -> str | None:
+        self.panel(title, [instructions], color=self.FG_MAGENTA)
+        lines: list[str] = []
+        while True:
+            prompt = self._style("> ", self.BOLD, self.FG_MAGENTA) if not lines else ""
+            line = self._read_line(prompt)
+            if not line.strip():
+                break
+            lines.append(line.rstrip())
+        text = "\n".join(lines).strip()
+        return text or None
+
+    def _read_required_single_line(self, label: str, context: list[str] | None = None) -> str:
+        if context:
+            self.panel(label, context, color=self.FG_MAGENTA)
+        while True:
+            answer = self._read_line(self._style(f"{label}:\n> ", self.BOLD, self.FG_MAGENTA)).strip()
+            if answer:
+                return answer
+            self.show_status("Response cannot be empty.", level="warn")
 
     # ------------------------------------------------------------------
     # Intake session helpers
@@ -521,7 +600,8 @@ class TerminalUI:
         inner_width = width - 4
         rendered: list[str] = []
         border = "+" + "-" * (width - 2) + "+"
-        header = f"| {self._truncate(title, inner_width).ljust(inner_width)} |"
+        header_text = self._pad_to_width(self._truncate_to_width(title, inner_width), inner_width)
+        header = f"| {header_text} |"
         divider = "|" + "-" * (width - 2) + "|"
         rendered.append(self._style(border, color))
         rendered.append(self._style(header, self.BOLD, color))
@@ -531,36 +611,104 @@ class TerminalUI:
         for raw_line in body_lines:
             wrapped = self._wrap_preserving_paragraphs(str(raw_line), inner_width)
             if not wrapped:
-                rendered.append(f"| {' ' * inner_width} |")
+                rendered.append(self._framed_body_line("", inner_width, color=color))
                 continue
             for line in wrapped:
-                rendered.append(f"| {line.ljust(inner_width)} |")
+                rendered.append(self._framed_body_line(line, inner_width, color=color))
         rendered.append(self._style(border, color))
         return rendered
 
-    def _menu_lines(self, title: str, options: list[str], selected: int) -> list[str]:
+    def _menu_lines(
+        self,
+        title: str,
+        options: list[str],
+        selected: int,
+        *,
+        selectable_start: int = 0,
+    ) -> list[str]:
         width = self._width()
         inner_width = width - 4
+        header_text = self._pad_to_width(self._truncate_to_width(title, inner_width), inner_width)
         lines = [
             self._style("+" + "-" * (width - 2) + "+", self.FG_MAGENTA),
-            self._style(f"| {title.ljust(inner_width)} |", self.BOLD, self.FG_MAGENTA),
+            self._style(f"| {header_text} |", self.BOLD, self.FG_MAGENTA),
             self._style("|" + "-" * (width - 2) + "|", self.FG_MAGENTA),
         ]
         for index, option in enumerate(options):
-            prefix = ">" if index == selected else " "
+            is_selectable = index >= selectable_start
+            is_selected = index == selected
+            prefix = ">" if is_selected else " "
+            if not is_selectable:
+                prefix = " "
             text = f"{prefix} {option}"
             for line_no, wrapped in enumerate(self._wrap_preserving_paragraphs(text, inner_width)):
-                if index == selected:
-                    lines.append(self._style(f"| {wrapped.ljust(inner_width)} |", self.REVERSE, self.FG_MAGENTA))
+                if is_selected:
+                    lines.append(
+                        self._framed_body_line(
+                            wrapped,
+                            inner_width,
+                            color=self.FG_MAGENTA,
+                            text_codes=(self.REVERSE, self.FG_MAGENTA),
+                        )
+                    )
                 else:
-                    lines.append(f"| {wrapped.ljust(inner_width)} |")
+                    lines.append(self._framed_body_line(wrapped, inner_width, color=self.FG_MAGENTA))
                 if line_no == 0:
                     prefix = " "
-        hint = "Controls: Up/Down or j/k, 1-6 to jump, Enter to select"
+        selectable_count = len(options) - selectable_start
+        jump_hint = f"1-{selectable_count}" if selectable_count > 1 else "1"
+        hint = f"Controls: Up/Down or j/k, {jump_hint} to jump, Enter to select"
         lines.append(self._style("|" + "-" * (width - 2) + "|", self.FG_MAGENTA))
-        lines.append(f"| {self._truncate(hint, inner_width).ljust(inner_width)} |")
+        lines.append(self._framed_body_line(self._truncate_to_width(hint, inner_width), inner_width, color=self.FG_MAGENTA))
         lines.append(self._style("+" + "-" * (width - 2) + "+", self.FG_MAGENTA))
         return lines
+
+    def _choose_menu_index(
+        self,
+        title: str,
+        options: list[str],
+        *,
+        selectable_start: int = 0,
+        clear_on_select: bool = True,
+    ) -> int:
+        if not self._interactive_input_available():
+            while True:
+                self.panel(title, options, color=self.FG_MAGENTA)
+                choice = self._read_line("Enter your choice:\n> ").strip()
+                if choice.isdigit():
+                    selected = selectable_start + int(choice) - 1
+                    if selectable_start <= selected < len(options):
+                        return selected
+                max_choice = len(options) - selectable_start
+                self.show_status(f"Invalid choice. Enter 1-{max_choice}.", level="warn")
+
+        selected = selectable_start
+        previous_line_count = 0
+        self._write("\x1b[?25l")
+        try:
+            while True:
+                lines = self._menu_lines(title, options, selected, selectable_start=selectable_start)
+                previous_line_count = self._replace_live_block(lines, previous_line_count)
+                key = self._read_key()
+
+                if key in {"up", "k"}:
+                    selected -= 1
+                    if selected < selectable_start:
+                        selected = len(options) - 1
+                elif key in {"down", "j"}:
+                    selected += 1
+                    if selected >= len(options):
+                        selected = selectable_start
+                elif key.isdigit():
+                    candidate = selectable_start + int(key) - 1
+                    if selectable_start <= candidate < len(options):
+                        selected = candidate
+                elif key == "enter":
+                    if clear_on_select:
+                        self._clear_live_block(previous_line_count)
+                    return selected
+        finally:
+            self._write("\x1b[?25h")
 
     def _replace_live_block(self, lines: list[str], previous_line_count: int) -> int:
         self._clear_live_block(previous_line_count)
@@ -582,33 +730,76 @@ class TerminalUI:
             if not paragraph.strip():
                 lines.append("")
                 continue
-            wrapped = textwrap.wrap(
-                paragraph,
-                width=width,
-                break_long_words=False,
-                break_on_hyphens=False,
-                replace_whitespace=False,
-                drop_whitespace=False,
-            )
-            if not wrapped:
-                lines.append("")
-                continue
-            for segment in wrapped:
-                if len(segment) <= width:
-                    lines.append(segment)
-                    continue
-                lines.extend(
-                    textwrap.wrap(
-                        segment,
-                        width=width,
-                        break_long_words=True,
-                        break_on_hyphens=False,
-                        replace_whitespace=False,
-                        drop_whitespace=False,
-                    )
-                    or [""]
-                )
+            lines.extend(self._wrap_display_line(paragraph, width))
         return lines
+
+    def _wrap_display_line(self, text: str, width: int) -> list[str]:
+        remaining = text
+        wrapped: list[str] = []
+        while self._display_width(remaining) > width:
+            cut = self._find_wrap_cut(remaining, width)
+            segment = remaining[:cut].rstrip()
+            wrapped.append(segment or remaining[:cut])
+            remaining = remaining[cut:].lstrip()
+        wrapped.append(remaining)
+        return wrapped
+
+    def _find_wrap_cut(self, text: str, width: int) -> int:
+        cells = 0
+        last_space = -1
+        for index, char in enumerate(text):
+            char_width = self._char_width(char)
+            if cells + char_width > width:
+                if last_space > 0:
+                    return last_space + 1
+                return max(index, 1)
+            cells += char_width
+            if char.isspace():
+                last_space = index
+        return len(text)
+
+    def _framed_body_line(
+        self,
+        text: str,
+        inner_width: int,
+        *,
+        color: str = "",
+        text_codes: tuple[str, ...] = (),
+    ) -> str:
+        padded = self._pad_to_width(text, inner_width)
+        body = self._style(padded, *text_codes) if text_codes else padded
+        if color and self._ansi_available():
+            return f"{self._style('|', color)} {body} {self._style('|', color)}"
+        return f"| {body} |"
+
+    def _pad_to_width(self, text: str, width: int) -> str:
+        return text + " " * max(0, width - self._display_width(text))
+
+    def _truncate_to_width(self, text: str, width: int) -> str:
+        if self._display_width(text) <= width:
+            return text
+        suffix = "..."
+        target = max(0, width - len(suffix))
+        cells = 0
+        chars: list[str] = []
+        for char in text:
+            char_width = self._char_width(char)
+            if cells + char_width > target:
+                break
+            chars.append(char)
+            cells += char_width
+        return "".join(chars).rstrip() + suffix
+
+    def _display_width(self, text: str) -> int:
+        visible = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
+        return sum(self._char_width(char) for char in visible)
+
+    def _char_width(self, char: str) -> int:
+        if unicodedata.combining(char):
+            return 0
+        if unicodedata.east_asian_width(char) in {"F", "W"}:
+            return 2
+        return 1
 
     def _truncate_text_block(self, text: str, max_chars: int) -> list[str]:
         content = text.strip()

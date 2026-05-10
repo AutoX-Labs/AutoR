@@ -40,6 +40,9 @@ class CodexOperatorTests(unittest.TestCase):
         self.assertTrue(alias_path.exists())
         self.assertIn("exec", command)
         self.assertIn("--json", command)
+        self.assertIn("--sandbox", command)
+        self.assertIn("workspace-write", command)
+        self.assertNotIn("--full-auto", command)
         self.assertEqual(command[-1], "-")
         assert stdin_text is not None
         self.assertIn(str(alias_path), stdin_text)
@@ -60,6 +63,10 @@ class CodexOperatorTests(unittest.TestCase):
 
         self.assertIn("resume", command)
         self.assertIn("thread-123", command)
+        self.assertLess(command.index("--sandbox"), command.index("resume"))
+        self.assertLess(command.index("--skip-git-repo-check"), command.index("resume"))
+        self.assertLess(command.index("--json"), command.index("resume"))
+        self.assertEqual(command[-2:], ["thread-123", "-"])
 
 
 if __name__ == "__main__":

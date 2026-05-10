@@ -50,6 +50,15 @@ AutoR 当前主线适合做这些事情：
 
 AutoR 负责的是更上层的 research loop，而不是重新发明一个新的代码 agent。
 
+### 2.1 最近更新你需要知道
+
+最近主线有几个对真实使用很重要的变化：
+
+- `00_intake` 现在是专门的需求澄清阶段。第一轮会逐个问你澄清问题，每个问题可以选择模型给的选项、输入自定义回答，或者 skip；第二轮会展示更新后的 intake brief，不再把那 3 个问题当成普通 suggestion。
+- 终端 UI 更适合真实录屏和长 run：输出框正文行会保持彩色边框，长行、长路径和中文宽字符会自动换行，Stage 0 和审批菜单支持上下键选择。
+- Codex backend 已经改用当前 Codex CLI 的 `--sandbox workspace-write` 执行参数，不再触发 Codex CLI 内部旧 `--full-auto` 参数的 deprecated warning。注意这和 AutoR 自己的 `--full-auto` 审批模式不是一回事。
+- `--full-auto` 仍然是 AutoR 的自动审批模式：它让一个严格 reviewer agent 替代人工等待，但不改变 9 个 stage 的主体流程。
+
 ---
 
 ## 3. 安装前需要准备什么
@@ -604,6 +613,20 @@ Local execution is only for smoke tests.
 7. `07_writing`
 8. `08_dissemination`
 
+也就是说，实际是 **1 个 intake + 8 个正式研究阶段 = 9 个 stage**。
+
+| Stage | 这一阶段做什么 | 你应该重点检查什么 |
+| --- | --- | --- |
+| `00_intake` | 在正式研究前对齐目标、资源、约束、评估方向和投稿风格。 | 逐个回答澄清问题，补充硬约束，确认题目足够窄、足够可执行。 |
+| `01_literature_survey` | 整理相关工作、任务背景、benchmark、baseline 和已有缺口。 | 不要接受浅层论文列表，要看是否有结构化文献文件、对比和证据账本。 |
+| `02_hypothesis_generation` | 把方向收敛为可检验的主假设、次级假设和临时 paper claim。 | 确认它不是继续 brainstorm，而是真的锁定了可实验、可否证的主线。 |
+| `03_study_design` | 把假设变成可执行实验设计。 | 检查数据集、指标、baseline、ablation、预算、随机种子、失败判据和数据产物。 |
+| `04_implementation` | 写真实代码、配置、数据准备脚本和 sanity check。 | 不要 approve 只有 skeleton 的实现；要看到可运行脚本、命令、配置和日志。 |
+| `05_experimentation` | 按设计运行实验并保存机器可读结果。 | 区分 smoke test 和正式实验；要有 baseline、重复运行、结果文件和失败记录。 |
+| `06_analysis` | 分析结果、画图、做误差分析和机制解释。 | 不要只复述最好指标；要看图表、失败案例、消融解释和结论边界。 |
+| `07_writing` | 生成 venue-aware 的论文源文件、Bib、可编译 PDF 和引用校验。 | 检查每个核心 claim 是否能追溯到实验、图表或文献，不要只看 PDF 是否漂亮。 |
+| `08_dissemination` | 补齐 review、release、readiness、复现和对外交付材料。 | 确认这个 run 能被别人检查、复现、展示，而不是只停在论文。 |
+
 每个 stage 的逻辑都一样：
 
 1. AutoR 生成 prompt
@@ -612,7 +635,7 @@ Local execution is only for smoke tests.
 4. stage 结束后生成结构化 stage summary
 5. 你决定是 refine 还是 approve
 
-审批菜单固定有 6 个动作：
+从 `01_literature_survey` 到 `08_dissemination`，审批菜单固定有 6 个动作：
 
 1. 使用建议 1 继续改
 2. 使用建议 2 继续改
@@ -620,6 +643,13 @@ Local execution is only for smoke tests.
 4. 输入你自己的反馈继续改
 5. 批准并进入下一阶段
 6. 中止
+
+`00_intake` 是特例：
+
+- 第一轮不会让你直接选“使用 suggestion 1/2/3”，而是把 3 条内容当成澄清问题逐个问你
+- 每个问题都可以选择选项、输入自定义回答，或者 skip
+- 问完后还可以输入额外自定义建议
+- 第二轮会重新生成 intake brief，然后只让你选择“自定义反馈 / 继续 / 退出”
 
 最常用的是：
 
