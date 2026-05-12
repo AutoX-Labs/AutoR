@@ -748,7 +748,3 @@ Join the project community channels:
 | Discord | WeChat | WhatsApp |
 | --- | --- | --- |
 | <img src="assets/discord.jpg" alt="Discord QR" width="180" /> | <img src="assets/wechat.jpg" alt="WeChat QR" width="180" /> | <img src="assets/whatsapp.jpg" alt="WhatsApp QR" width="180" /> |
-
-## ⭐ Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=AutoX-AI-Labs/AutoR&type=Date)](https://star-history.com/#AutoX-AI-Labs/AutoR&Date)
